@@ -238,7 +238,8 @@ enum ClipExporter {
             throw ClipExportError.readerFailed(underlying: reader.error)
         }
 
-        guard let firstSourceBuffer = try await readNextDecodedBuffer(output: readerOutput, reader: reader) else {
+        guard let firstSourceSampleBuffer = try await readNextDecodedSampleBuffer(output: readerOutput, reader: reader),
+              let firstSourceBuffer = CMSampleBufferGetImageBuffer(firstSourceSampleBuffer) else {
             throw ClipExportError.frameExtractionFailed(frameIndex: request.inFrame)
         }
 
@@ -303,20 +304,34 @@ enum ClipExporter {
             throw ClipExportError.failedToCreatePixelBuffer
         }
 
-        var lastSourceBuffer = firstSourceBuffer
+        defer {
+            if reader.status == .reading {
+                reader.cancelReading()
+            }
+
+            if writer.status == .writing {
+                writer.cancelWriting()
+            }
+        }
+
+        var lastSourceSampleBuffer = firstSourceSampleBuffer
 
         for frameOffset in 0..<request.frameCount {
-            try await waitUntilReady(for: writerInput)
+            try await waitUntilReady(for: writerInput, writer: writer)
 
-            let sourceBuffer: CVPixelBuffer
+            let sourceSampleBuffer: CMSampleBuffer
             if frameOffset == 0 {
-                sourceBuffer = firstSourceBuffer
-            } else if let nextDecodedBuffer = try await readNextDecodedBuffer(output: readerOutput, reader: reader) {
-                sourceBuffer = nextDecodedBuffer
-                lastSourceBuffer = nextDecodedBuffer
+                sourceSampleBuffer = firstSourceSampleBuffer
+            } else if let nextDecodedSampleBuffer = try await readNextDecodedSampleBuffer(output: readerOutput, reader: reader) {
+                sourceSampleBuffer = nextDecodedSampleBuffer
+                lastSourceSampleBuffer = nextDecodedSampleBuffer
             } else {
                 // If the source provides fewer decodable frames than requested, pad with the last frame.
-                sourceBuffer = lastSourceBuffer
+                sourceSampleBuffer = lastSourceSampleBuffer
+            }
+
+            guard let sourceBuffer = CMSampleBufferGetImageBuffer(sourceSampleBuffer) else {
+                throw ClipExportError.frameExtractionFailed(frameIndex: request.inFrame + frameOffset)
             }
 
             let pixelBuffer = try clonePixelBuffer(
@@ -363,14 +378,14 @@ enum ClipExporter {
         }
     }
 
-    private static func readNextDecodedBuffer(
+    private static func readNextDecodedSampleBuffer(
         output: AVAssetReaderTrackOutput,
         reader: AVAssetReader
-    ) async throws -> CVPixelBuffer? {
+    ) async throws -> CMSampleBuffer? {
         while true {
             if let sampleBuffer = output.copyNextSampleBuffer() {
-                if let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
-                    return imageBuffer
+                if CMSampleBufferGetImageBuffer(sampleBuffer) != nil {
+                    return sampleBuffer
                 }
                 continue
             }
@@ -452,8 +467,14 @@ enum ClipExporter {
         return pixelBuffer
     }
 
-    private static func waitUntilReady(for input: AVAssetWriterInput) async throws {
+    private static func waitUntilReady(for input: AVAssetWriterInput, writer: AVAssetWriter) async throws {
         while !input.isReadyForMoreMediaData {
+            switch writer.status {
+            case .failed, .cancelled:
+                throw ClipExportError.writerFailed(underlying: writer.error)
+            default:
+                break
+            }
             try Task.checkCancellation()
             try await Task.sleep(nanoseconds: 1_000_000)
         }

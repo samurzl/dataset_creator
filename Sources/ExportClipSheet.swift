@@ -1,3 +1,4 @@
+import AppKit
 import AVFoundation
 import SwiftUI
 
@@ -40,6 +41,7 @@ struct ExportClipSheet: View {
     @State private var captionText = ""
     @State private var isExporting = false
     @State private var exportErrorMessage: String?
+    @State private var exportTask: Task<Void, Never>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -98,10 +100,17 @@ struct ExportClipSheet: View {
         }
         .padding(16)
         .frame(minWidth: 950, minHeight: 760)
+        .background(
+            ResizableSheetWindowConfigurator(
+                minSize: NSSize(width: 950, height: 760)
+            )
+        )
         .task(id: request.id) {
             await previewController.load(request: request)
         }
         .onDisappear {
+            exportTask?.cancel()
+            exportTask = nil
             previewController.stop()
         }
     }
@@ -110,16 +119,71 @@ struct ExportClipSheet: View {
         guard !isExporting else { return }
         exportErrorMessage = nil
         isExporting = true
+        let caption = captionText
 
-        Task {
-            defer { isExporting = false }
-
+        exportTask?.cancel()
+        exportTask = Task(priority: .userInitiated) {
             do {
-                try await onExport(captionText)
-                onCancel()
+                try await onExport(caption)
+
+                await MainActor.run {
+                    isExporting = false
+                    exportTask = nil
+                    onCancel()
+                }
+            } catch is CancellationError {
+                await MainActor.run {
+                    isExporting = false
+                    exportTask = nil
+                }
             } catch {
-                exportErrorMessage = error.localizedDescription
+                await MainActor.run {
+                    isExporting = false
+                    exportTask = nil
+                    exportErrorMessage = error.localizedDescription
+                }
             }
+        }
+
+    }
+}
+
+private struct ResizableSheetWindowConfigurator: NSViewRepresentable {
+    let minSize: NSSize
+
+    func makeNSView(context: Context) -> NSView {
+        ConfiguratorView(minSize: minSize)
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        guard let configuratorView = nsView as? ConfiguratorView else { return }
+        configuratorView.minSize = minSize
+        configuratorView.applyWindowConfiguration()
+    }
+
+    private final class ConfiguratorView: NSView {
+        var minSize: NSSize
+
+        init(minSize: NSSize) {
+            self.minSize = minSize
+            super.init(frame: .zero)
+            setFrameSize(.zero)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            nil
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            applyWindowConfiguration()
+        }
+
+        func applyWindowConfiguration() {
+            guard let window else { return }
+            window.styleMask.insert(.resizable)
+            window.minSize = minSize
         }
     }
 }
