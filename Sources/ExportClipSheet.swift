@@ -48,38 +48,52 @@ struct ExportClipSheet: View {
             Text("Export Clip")
                 .font(.system(size: 20, weight: .semibold))
 
-            PlayerPreview(player: previewController.player)
-                .aspectRatio(max(request.aspectRatio, 0.1), contentMode: .fit)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .frame(minHeight: 320)
-                .background(Color.secondary.opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            GeometryReader { geometry in
+                let mediaAndCaptionHeight = max(geometry.size.height, 1)
+                let previewHeight = max(mediaAndCaptionHeight * 0.58, 1)
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Caption")
-                    .font(.system(size: 13, weight: .semibold))
+                VStack(alignment: .leading, spacing: 12) {
+                    PlayerPreview(player: previewController.player)
+                        .aspectRatio(max(request.aspectRatio, 0.1), contentMode: .fit)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: previewHeight)
+                        .background(Color.secondary.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-                TextEditor(text: $captionText)
-                    .font(.system(size: 13, design: .monospaced))
-                    .frame(minHeight: 180)
-                    .padding(6)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(Color.secondary.opacity(0.5), lineWidth: 1)
-                    )
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Caption")
+                            .font(.system(size: 13, weight: .semibold))
+
+                        TextEditor(text: $captionText)
+                            .font(.system(size: 13, design: .monospaced))
+                            .frame(minHeight: 1, maxHeight: .infinity)
+                            .padding(6)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .stroke(Color.secondary.opacity(0.5), lineWidth: 1)
+                            )
+                    }
+                    .frame(minHeight: 1, maxHeight: .infinity)
+
+                    if let loadingErrorMessage = previewController.loadingErrorMessage {
+                        Text("Preview error: \(loadingErrorMessage)")
+                            .font(.system(size: 12))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .foregroundStyle(.red)
+                    }
+
+                    if let exportErrorMessage {
+                        Text("Export error: \(exportErrorMessage)")
+                            .font(.system(size: 12))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .foregroundStyle(.red)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
-
-            if let loadingErrorMessage = previewController.loadingErrorMessage {
-                Text("Preview error: \(loadingErrorMessage)")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.red)
-            }
-
-            if let exportErrorMessage {
-                Text("Export error: \(exportErrorMessage)")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.red)
-            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             HStack(spacing: 10) {
                 Button("Cancel", role: .cancel, action: onCancel)
@@ -99,11 +113,9 @@ struct ExportClipSheet: View {
             }
         }
         .padding(16)
-        .frame(minWidth: 950, minHeight: 760)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(
-            ResizableSheetWindowConfigurator(
-                minSize: NSSize(width: 950, height: 760)
-            )
+            ResizableSheetWindowConfigurator()
         )
         .task(id: request.id) {
             await previewController.load(request: request)
@@ -149,23 +161,17 @@ struct ExportClipSheet: View {
 }
 
 private struct ResizableSheetWindowConfigurator: NSViewRepresentable {
-    let minSize: NSSize
-
     func makeNSView(context: Context) -> NSView {
-        ConfiguratorView(minSize: minSize)
+        ConfiguratorView()
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
         guard let configuratorView = nsView as? ConfiguratorView else { return }
-        configuratorView.minSize = minSize
         configuratorView.applyWindowConfiguration()
     }
 
     private final class ConfiguratorView: NSView {
-        var minSize: NSSize
-
-        init(minSize: NSSize) {
-            self.minSize = minSize
+        init() {
             super.init(frame: .zero)
             setFrameSize(.zero)
         }
@@ -183,7 +189,8 @@ private struct ResizableSheetWindowConfigurator: NSViewRepresentable {
         func applyWindowConfiguration() {
             guard let window else { return }
             window.styleMask.insert(.resizable)
-            window.minSize = minSize
+            window.minSize = .zero
+            window.contentMinSize = .zero
         }
     }
 }
