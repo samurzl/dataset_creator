@@ -2,11 +2,7 @@ import Darwin
 import Foundation
 
 enum RuntimeEnvironment {
-    static var shouldDisableExportPreview: Bool {
-        if ProcessInfo.processInfo.environment["VIDEODATASETBROWSER_DISABLE_EXPORT_PREVIEW"] == "1" {
-            return true
-        }
-
+    static var isLikelyVirtualMachine: Bool {
         if let model = sysctlString("hw.model"),
            model.localizedCaseInsensitiveContains("virtual") {
             return true
@@ -25,6 +21,22 @@ enum RuntimeEnvironment {
         }
 
         return false
+    }
+
+    static var shouldDisableExportPreview: Bool {
+        ProcessInfo.processInfo.environment["VIDEODATASETBROWSER_DISABLE_EXPORT_PREVIEW"] == "1"
+    }
+
+    static var shouldUseSafeExportEncoding: Bool {
+        if ProcessInfo.processInfo.environment["VIDEODATASETBROWSER_SAFE_EXPORT_ENCODING"] == "1" {
+            return true
+        }
+
+        if ProcessInfo.processInfo.environment["VIDEODATASETBROWSER_SAFE_EXPORT_ENCODING"] == "0" {
+            return false
+        }
+
+        return isLikelyVirtualMachine
     }
 
     private static func sysctlString(_ key: String) -> String? {

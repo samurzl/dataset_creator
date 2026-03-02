@@ -247,23 +247,41 @@ enum ClipExporter {
         let renderHeight = max(CVPixelBufferGetHeight(firstSourceBuffer), 1)
         let preferredTransform = try await sourceVideoTrack.load(.preferredTransform)
         let sourceEstimatedBitRate = Int((try await sourceVideoTrack.load(.estimatedDataRate)).rounded())
+        let useSafeEncodingProfile = RuntimeEnvironment.shouldUseSafeExportEncoding
 
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
         let integerFrameRate = max(Int(request.frameRate.rounded()), 1)
-        let resolutionScaledBitRate = max(renderWidth * renderHeight * 14, 12_000_000)
-        let sourceScaledBitRate = max(sourceEstimatedBitRate * 2, 0)
-        let targetBitRate = min(max(resolutionScaledBitRate, sourceScaledBitRate), 240_000_000)
-        let compressionSettings: [String: Any] = [
-            AVVideoAverageBitRateKey: targetBitRate,
-            AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
-            AVVideoExpectedSourceFrameRateKey: integerFrameRate,
-            AVVideoAverageNonDroppableFrameRateKey: integerFrameRate,
-            AVVideoAllowFrameReorderingKey: true,
-            AVVideoH264EntropyModeKey: AVVideoH264EntropyModeCABAC,
-            AVVideoMaxKeyFrameIntervalKey: max(integerFrameRate * 2, 1),
-            AVVideoMaxKeyFrameIntervalDurationKey: 2,
-            AVVideoQualityKey: 1.0
-        ]
+        let compressionSettings: [String: Any]
+        if useSafeEncodingProfile {
+            // Virtualized environments often expose unstable hardware encode paths.
+            // Keep settings conservative to favor stability over compression efficiency.
+            let resolutionScaledBitRate = max(renderWidth * renderHeight * 8, 2_000_000)
+            let sourceScaledBitRate = max(sourceEstimatedBitRate, 0)
+            let targetBitRate = min(max(resolutionScaledBitRate, sourceScaledBitRate), 24_000_000)
+            compressionSettings = [
+                AVVideoAverageBitRateKey: targetBitRate,
+                AVVideoProfileLevelKey: AVVideoProfileLevelH264BaselineAutoLevel,
+                AVVideoExpectedSourceFrameRateKey: integerFrameRate,
+                AVVideoAllowFrameReorderingKey: false,
+                AVVideoMaxKeyFrameIntervalKey: max(integerFrameRate, 1),
+                AVVideoMaxKeyFrameIntervalDurationKey: 1
+            ]
+        } else {
+            let resolutionScaledBitRate = max(renderWidth * renderHeight * 14, 12_000_000)
+            let sourceScaledBitRate = max(sourceEstimatedBitRate * 2, 0)
+            let targetBitRate = min(max(resolutionScaledBitRate, sourceScaledBitRate), 240_000_000)
+            compressionSettings = [
+                AVVideoAverageBitRateKey: targetBitRate,
+                AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
+                AVVideoExpectedSourceFrameRateKey: integerFrameRate,
+                AVVideoAverageNonDroppableFrameRateKey: integerFrameRate,
+                AVVideoAllowFrameReorderingKey: true,
+                AVVideoH264EntropyModeKey: AVVideoH264EntropyModeCABAC,
+                AVVideoMaxKeyFrameIntervalKey: max(integerFrameRate * 2, 1),
+                AVVideoMaxKeyFrameIntervalDurationKey: 2,
+                AVVideoQualityKey: 1.0
+            ]
+        }
         let outputSettings: [String: Any] = [
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: renderWidth,
@@ -273,7 +291,7 @@ enum ClipExporter {
 
         let writerInput = AVAssetWriterInput(mediaType: .video, outputSettings: outputSettings)
         writerInput.expectsMediaDataInRealTime = false
-        writerInput.performsMultiPassEncodingIfSupported = true
+        writerInput.performsMultiPassEncodingIfSupported = !useSafeEncodingProfile
         writerInput.mediaTimeScale = 60_000
         writerInput.transform = preferredTransform
 
