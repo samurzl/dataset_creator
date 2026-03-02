@@ -3,21 +3,30 @@ import SwiftUI
 
 @MainActor
 final class ExportPreviewController: ObservableObject {
-    let player = AVQueuePlayer()
+    private var backingPlayer: AVPlayer?
+
+    var player: AVPlayer {
+        if let backingPlayer {
+            return backingPlayer
+        }
+
+        let player = AVPlayer()
+        backingPlayer = player
+        return player
+    }
 
     @Published private(set) var loadingErrorMessage: String?
 
-    private var looper: AVPlayerLooper?
+    private var itemDidPlayToEndObserver: NSObjectProtocol?
 
     func load(request: ClipExportRequest) async {
-        player.pause()
-        player.removeAllItems()
-        looper = nil
+        stop()
         loadingErrorMessage = nil
 
         do {
             let item = try await ClipExporter.createPreviewItem(for: request)
-            looper = AVPlayerLooper(player: player, templateItem: item)
+            installLooping(for: item)
+            player.replaceCurrentItem(with: item)
             player.play()
         } catch {
             loadingErrorMessage = error.localizedDescription
@@ -25,9 +34,33 @@ final class ExportPreviewController: ObservableObject {
     }
 
     func stop() {
-        player.pause()
-        player.removeAllItems()
-        looper = nil
+        backingPlayer?.pause()
+        backingPlayer?.replaceCurrentItem(with: nil)
+        removeLoopingObserver()
+    }
+
+    private func installLooping(for item: AVPlayerItem) {
+        removeLoopingObserver()
+
+        let player = self.player
+        player.actionAtItemEnd = .none
+        itemDidPlayToEndObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: item,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let player = self?.backingPlayer else { return }
+                player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+                player.play()
+            }
+        }
+    }
+
+    private func removeLoopingObserver() {
+        guard let itemDidPlayToEndObserver else { return }
+        NotificationCenter.default.removeObserver(itemDidPlayToEndObserver)
+        self.itemDidPlayToEndObserver = nil
     }
 }
 
@@ -42,6 +75,10 @@ struct ExportClipSheet: View {
     @State private var exportErrorMessage: String?
     @State private var exportTask: Task<Void, Never>?
 
+    private var isLivePreviewEnabled: Bool {
+        !RuntimeEnvironment.shouldDisableExportPreview
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Export Clip")
@@ -52,12 +89,26 @@ struct ExportClipSheet: View {
                 let previewHeight = max(mediaAndCaptionHeight * 0.58, 1)
 
                 VStack(alignment: .leading, spacing: 12) {
-                    PlayerPreview(player: previewController.player)
-                        .aspectRatio(max(request.aspectRatio, 0.1), contentMode: .fit)
+                    if isLivePreviewEnabled {
+                        PlayerPreview(player: previewController.player)
+                            .aspectRatio(max(request.aspectRatio, 0.1), contentMode: .fit)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: previewHeight)
+                            .background(Color.secondary.opacity(0.1))
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    } else {
+                        VStack(spacing: 8) {
+                            Text("Preview disabled in virtual machine")
+                                .font(.system(size: 14, weight: .semibold))
+                            Text("Export remains fully available.")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
                         .frame(maxWidth: .infinity)
                         .frame(height: previewHeight)
                         .background(Color.secondary.opacity(0.1))
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
 
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Caption")
@@ -74,7 +125,7 @@ struct ExportClipSheet: View {
                     }
                     .frame(minHeight: 1, maxHeight: .infinity)
 
-                    if let loadingErrorMessage = previewController.loadingErrorMessage {
+                    if isLivePreviewEnabled, let loadingErrorMessage = previewController.loadingErrorMessage {
                         Text("Preview error: \(loadingErrorMessage)")
                             .font(.system(size: 12))
                             .lineLimit(1)
@@ -107,13 +158,17 @@ struct ExportClipSheet: View {
                 }
 
                 Button("Export", action: performExport)
-                    .disabled(isExporting || previewController.loadingErrorMessage != nil)
+                    .disabled(
+                        isExporting ||
+                        (isLivePreviewEnabled && previewController.loadingErrorMessage != nil)
+                    )
                     .keyboardShortcut(.defaultAction)
             }
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task(id: request.id) {
+            guard isLivePreviewEnabled else { return }
             await previewController.load(request: request)
         }
         .onDisappear {
