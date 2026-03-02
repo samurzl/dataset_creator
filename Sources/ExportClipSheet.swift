@@ -1,4 +1,3 @@
-import AppKit
 import AVFoundation
 import SwiftUI
 
@@ -114,9 +113,6 @@ struct ExportClipSheet: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(
-            ResizableSheetWindowConfigurator()
-        )
         .task(id: request.id) {
             await previewController.load(request: request)
         }
@@ -157,40 +153,5 @@ struct ExportClipSheet: View {
             }
         }
 
-    }
-}
-
-private struct ResizableSheetWindowConfigurator: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        ConfiguratorView()
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        guard let configuratorView = nsView as? ConfiguratorView else { return }
-        configuratorView.applyWindowConfiguration()
-    }
-
-    private final class ConfiguratorView: NSView {
-        init() {
-            super.init(frame: .zero)
-            setFrameSize(.zero)
-        }
-
-        @available(*, unavailable)
-        required init?(coder: NSCoder) {
-            nil
-        }
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            applyWindowConfiguration()
-        }
-
-        func applyWindowConfiguration() {
-            guard let window else { return }
-            window.styleMask.insert(.resizable)
-            window.minSize = .zero
-            window.contentMinSize = .zero
-        }
     }
 }

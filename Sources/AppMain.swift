@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 
@@ -12,9 +13,79 @@ struct VideoDatasetBrowserApp: App {
     }
 }
 
+@MainActor
+final class ExportWindowCoordinator: NSObject, ObservableObject, NSWindowDelegate {
+    private var window: NSWindow?
+
+    func present(
+        request: ClipExportRequest,
+        onExport: @escaping (String) async throws -> Void
+    ) {
+        close()
+
+        let rootView = ExportClipSheet(
+            request: request,
+            onCancel: { [weak self] in
+                self?.close()
+            },
+            onExport: onExport
+        )
+
+        let hostingController = NSHostingController(rootView: rootView)
+        let exportWindow = NSWindow(contentViewController: hostingController)
+        exportWindow.title = "Export Clip"
+        exportWindow.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        exportWindow.delegate = self
+        exportWindow.minSize = .zero
+        exportWindow.contentMinSize = .zero
+        exportWindow.isReleasedWhenClosed = false
+
+        setInitialFrame(for: exportWindow, relativeTo: NSApp.keyWindow ?? NSApp.mainWindow)
+
+        window = exportWindow
+        exportWindow.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func close() {
+        window?.close()
+        window = nil
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let closingWindow = notification.object as? NSWindow,
+              closingWindow == window else {
+            return
+        }
+        window = nil
+    }
+
+    private func setInitialFrame(for exportWindow: NSWindow, relativeTo parentWindow: NSWindow?) {
+        let fallbackSize = NSSize(width: 960, height: 680)
+
+        guard let parentWindow else {
+            exportWindow.setContentSize(fallbackSize)
+            return
+        }
+
+        let parentFrame = parentWindow.frame
+        let width = max(parentFrame.width * 0.88, 520)
+        let height = max(parentFrame.height * 0.88, 420)
+        let origin = NSPoint(
+            x: parentFrame.midX - (width / 2),
+            y: parentFrame.midY - (height / 2)
+        )
+
+        exportWindow.setFrame(
+            NSRect(origin: origin, size: NSSize(width: width, height: height)),
+            display: false
+        )
+    }
+}
+
 struct ContentView: View {
     @StateObject private var viewModel = VideoBrowserViewModel()
-    @State private var exportRequest: ClipExportRequest?
+    @StateObject private var exportWindowCoordinator = ExportWindowCoordinator()
     @State private var exportAlertMessage: String?
 
     var body: some View {
@@ -29,15 +100,7 @@ struct ContentView: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .sheet(item: $exportRequest) { request in
-            ExportClipSheet(
-                request: request,
-                onCancel: { exportRequest = nil },
-                onExport: { caption in
-                    _ = try await viewModel.exportClip(request: request, caption: caption)
-                }
-            )
-        }
+        .onDisappear(perform: exportWindowCoordinator.close)
         .alert("Export", isPresented: exportAlertIsPresented) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -165,7 +228,10 @@ struct ContentView: View {
 
     private func beginExport() {
         do {
-            exportRequest = try viewModel.makeExportRequest()
+            let request = try viewModel.makeExportRequest()
+            exportWindowCoordinator.present(request: request) { caption in
+                _ = try await viewModel.exportClip(request: request, caption: caption)
+            }
         } catch {
             exportAlertMessage = error.localizedDescription
         }
