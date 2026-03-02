@@ -18,12 +18,16 @@ final class VideoBrowserViewModel: ObservableObject {
 
     @Published private(set) var videoURLs: [URL] = []
     @Published private(set) var selectedVideoIndex: Int = 0
+    @Published private(set) var selectedVideoURL: URL?
 
     let playerController = VideoPlayerController()
 
     private let defaults = UserDefaults.standard
     private let fileManager = FileManager.default
+    private let inputVideoResampler = InputVideoResampler(targetFrameRate: 16)
     private var cancellables: Set<AnyCancellable> = []
+    private var activeLoadTask: Task<Void, Never>?
+    private var activeSelectionToken = UUID()
 
     private static let inputFolderDefaultsKey = "inputFolderPath"
     private static let outputFolderDefaultsKey = "outputFolderPath"
@@ -44,13 +48,17 @@ final class VideoBrowserViewModel: ObservableObject {
         }
     }
 
-    var selectedVideoURL: URL? {
+    deinit {
+        activeLoadTask?.cancel()
+    }
+
+    private var selectedSourceVideoURL: URL? {
         guard videoURLs.indices.contains(selectedVideoIndex) else { return nil }
         return videoURLs[selectedVideoIndex]
     }
 
     var selectedVideoName: String {
-        selectedVideoURL?.lastPathComponent ?? "No video selected"
+        selectedSourceVideoURL?.lastPathComponent ?? "No video selected"
     }
 
     var videoCountLabel: String {
@@ -130,13 +138,15 @@ final class VideoBrowserViewModel: ObservableObject {
 
     func refreshVideos() {
         guard !inputFolderPath.isEmpty else {
+            cancelVideoLoading()
             videoURLs = []
             selectedVideoIndex = 0
+            selectedVideoURL = nil
             playerController.clearVideo()
             return
         }
 
-        let previousSelection = selectedVideoURL
+        let previousSelection = selectedSourceVideoURL
         let folderURL = URL(fileURLWithPath: inputFolderPath, isDirectory: true)
 
         let discoveredVideos: [URL]
@@ -161,7 +171,9 @@ final class VideoBrowserViewModel: ObservableObject {
         videoURLs = discoveredVideos
 
         guard !videoURLs.isEmpty else {
+            cancelVideoLoading()
             selectedVideoIndex = 0
+            selectedVideoURL = nil
             playerController.clearVideo()
             return
         }
@@ -191,12 +203,44 @@ final class VideoBrowserViewModel: ObservableObject {
     }
 
     private func loadSelectedVideo() {
-        guard let selectedVideoURL else {
+        guard let selectedSourceVideoURL else {
+            cancelVideoLoading()
+            selectedVideoURL = nil
             playerController.clearVideo()
             return
         }
 
-        playerController.loadVideo(at: selectedVideoURL)
+        cancelVideoLoading()
+        selectedVideoURL = nil
+        playerController.clearVideo()
+
+        let selectionToken = UUID()
+        activeSelectionToken = selectionToken
+
+        activeLoadTask = Task { [weak self] in
+            guard let self else { return }
+
+            do {
+                let preparedVideoURL = try await self.inputVideoResampler.resampledURL(for: selectedSourceVideoURL)
+                guard !Task.isCancelled, self.activeSelectionToken == selectionToken else { return }
+
+                self.selectedVideoURL = preparedVideoURL
+                self.playerController.loadVideo(at: preparedVideoURL)
+            } catch is CancellationError {
+                return
+            } catch {
+                guard self.activeSelectionToken == selectionToken else { return }
+                self.selectedVideoURL = nil
+                self.playerController.clearVideo()
+            }
+            self.activeLoadTask = nil
+        }
+    }
+
+    private func cancelVideoLoading() {
+        activeSelectionToken = UUID()
+        activeLoadTask?.cancel()
+        activeLoadTask = nil
     }
 
     private func pickFolder(startingAt path: String) -> URL? {
