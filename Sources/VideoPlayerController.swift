@@ -42,7 +42,7 @@ final class VideoPlayerController: ObservableObject {
         installPeriodicTimeObserver()
     }
 
-    func loadVideo(at url: URL, treatedAsFrameRate: Double? = nil) {
+    func loadVideo(at url: URL) {
         guard activeURL != url else { return }
 
         activeURL = url
@@ -60,7 +60,7 @@ final class VideoPlayerController: ObservableObject {
         isLoopPlaying = false
         isRangeMarkerDragging = false
 
-        applyMetadata(from: item, treatedAsFrameRate: treatedAsFrameRate)
+        applyMetadata(from: item)
         inFrame = 0
         outFrame = max(totalFrames - 1, 0)
         applyQuantizedSelection(requestedFrameCount: totalFrames)
@@ -175,17 +175,11 @@ final class VideoPlayerController: ObservableObject {
         player.pause()
     }
 
-    private func applyMetadata(from item: AVPlayerItem, treatedAsFrameRate: Double?) {
-        if let treatedAsFrameRate, treatedAsFrameRate.isFinite, treatedAsFrameRate > 0 {
-            frameRate = treatedAsFrameRate
-        }
-
+    private func applyMetadata(from item: AVPlayerItem) {
         if let track = item.asset.tracks(withMediaType: .video).first {
-            if treatedAsFrameRate == nil {
-                let nominalRate = Double(track.nominalFrameRate)
-                if nominalRate.isFinite, nominalRate > 0 {
-                    frameRate = nominalRate
-                }
+            let nominalRate = Double(track.nominalFrameRate)
+            if nominalRate.isFinite, nominalRate > 0 {
+                frameRate = nominalRate
             }
 
             let transformedSize = track.naturalSize.applying(track.preferredTransform)

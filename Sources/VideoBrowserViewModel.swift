@@ -24,12 +24,16 @@ final class VideoBrowserViewModel: ObservableObject {
 
     private let defaults = UserDefaults.standard
     private let fileManager = FileManager.default
+    private let inputVideoResampler = InputVideoResampler(targetFrameRate: 16)
     private var cancellables: Set<AnyCancellable> = []
-    private let timelineFrameRate: Double = 16
+    private var activeLoadTask: Task<Void, Never>?
+    private var activeSelectionToken = UUID()
+    private var preloadingSourceURLs: Set<URL> = []
 
     private static let inputFolderDefaultsKey = "inputFolderPath"
     private static let outputFolderDefaultsKey = "outputFolderPath"
     private let supportedExtensions: Set<String> = ["mp4", "mov", "m4v", "mkv", "avi", "mpg", "mpeg", "webm"]
+    private let preloadLookaheadCount = 2
 
     init() {
         inputFolderPath = defaults.string(forKey: Self.inputFolderDefaultsKey) ?? ""
@@ -44,6 +48,10 @@ final class VideoBrowserViewModel: ObservableObject {
         if !inputFolderPath.isEmpty {
             refreshVideos()
         }
+    }
+
+    deinit {
+        activeLoadTask?.cancel()
     }
 
     private var selectedSourceVideoURL: URL? {
@@ -77,11 +85,11 @@ final class VideoBrowserViewModel: ObservableObject {
     }
 
     func makeExportRequest() throws -> ClipExportRequest {
-        guard let selectedSourceVideoURL else {
+        guard let selectedVideoURL else {
             throw ClipExportError.noVideoSelected
         }
 
-        let frameRate = timelineFrameRate
+        let frameRate = playerController.currentFrameRate
         guard frameRate.isFinite, frameRate > 0 else {
             throw ClipExportError.invalidFrameRate
         }
@@ -92,7 +100,7 @@ final class VideoBrowserViewModel: ObservableObject {
         }
 
         return ClipExportRequest(
-            videoURL: selectedSourceVideoURL,
+            videoURL: selectedVideoURL,
             inFrame: playerController.inFrame,
             frameCount: frameCount,
             frameRate: frameRate,
@@ -132,6 +140,8 @@ final class VideoBrowserViewModel: ObservableObject {
 
     func refreshVideos() {
         guard !inputFolderPath.isEmpty else {
+            cancelVideoLoading()
+            preloadingSourceURLs.removeAll(keepingCapacity: true)
             videoURLs = []
             selectedVideoIndex = 0
             selectedVideoURL = nil
@@ -162,8 +172,10 @@ final class VideoBrowserViewModel: ObservableObject {
         }
 
         videoURLs = discoveredVideos
+        preloadingSourceURLs.removeAll(keepingCapacity: true)
 
         guard !videoURLs.isEmpty else {
+            cancelVideoLoading()
             selectedVideoIndex = 0
             selectedVideoURL = nil
             playerController.clearVideo()
@@ -196,16 +208,69 @@ final class VideoBrowserViewModel: ObservableObject {
 
     private func loadSelectedVideo() {
         guard let selectedSourceVideoURL else {
+            cancelVideoLoading()
+            preloadingSourceURLs.removeAll(keepingCapacity: true)
             selectedVideoURL = nil
             playerController.clearVideo()
             return
         }
 
-        selectedVideoURL = selectedSourceVideoURL
-        playerController.loadVideo(
-            at: selectedSourceVideoURL,
-            treatedAsFrameRate: timelineFrameRate
-        )
+        cancelVideoLoading()
+        selectedVideoURL = nil
+        playerController.clearVideo()
+        scheduleLookaheadPreload(after: selectedVideoIndex)
+
+        let selectionToken = UUID()
+        activeSelectionToken = selectionToken
+
+        activeLoadTask = Task { [weak self] in
+            guard let self else { return }
+
+            do {
+                let preparedVideoURL = try await self.inputVideoResampler.resampledURL(for: selectedSourceVideoURL)
+                guard !Task.isCancelled, self.activeSelectionToken == selectionToken else { return }
+
+                self.selectedVideoURL = preparedVideoURL
+                self.playerController.loadVideo(at: preparedVideoURL)
+            } catch is CancellationError {
+                return
+            } catch {
+                guard self.activeSelectionToken == selectionToken else { return }
+                self.selectedVideoURL = nil
+                self.playerController.clearVideo()
+            }
+            self.activeLoadTask = nil
+        }
+    }
+
+    private func cancelVideoLoading() {
+        activeSelectionToken = UUID()
+        activeLoadTask?.cancel()
+        activeLoadTask = nil
+    }
+
+    private func scheduleLookaheadPreload(after index: Int) {
+        guard !videoURLs.isEmpty else { return }
+
+        let startIndex = index + 1
+        let endIndex = min(index + preloadLookaheadCount, videoURLs.count - 1)
+        guard startIndex <= endIndex else { return }
+
+        for preloadIndex in startIndex...endIndex {
+            schedulePreload(for: videoURLs[preloadIndex])
+        }
+    }
+
+    private func schedulePreload(for sourceURL: URL) {
+        guard preloadingSourceURLs.insert(sourceURL).inserted else { return }
+
+        Task(priority: .background) { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.preloadingSourceURLs.remove(sourceURL)
+            }
+            _ = try? await self.inputVideoResampler.resampledURL(for: sourceURL)
+        }
     }
 
     private func pickFolder(startingAt path: String) -> URL? {
