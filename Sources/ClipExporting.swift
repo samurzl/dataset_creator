@@ -212,40 +212,19 @@ enum ClipExporter {
             throw ClipExportError.invalidSourceRange
         }
 
-        let availableDurationSeconds = max(assetDurationSeconds - startSeconds, 0)
-        guard availableDurationSeconds > 0 else {
-            throw ClipExportError.invalidSourceRange
-        }
+        let frameGenerator = AVAssetImageGenerator(asset: sourceAsset)
+        frameGenerator.appliesPreferredTrackTransform = true
 
-        let reader = try AVAssetReader(asset: sourceAsset)
-        reader.timeRange = CMTimeRange(
-            start: CMTime(seconds: startSeconds, preferredTimescale: 60_000),
-            duration: CMTime(seconds: availableDurationSeconds, preferredTimescale: 60_000)
-        )
-
-        let readerOutputSettings: [String: Any] = [
-            kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)
-        ]
-        let readerOutput = AVAssetReaderTrackOutput(track: sourceVideoTrack, outputSettings: readerOutputSettings)
-        readerOutput.alwaysCopiesSampleData = false
-
-        guard reader.canAdd(readerOutput) else {
-            throw ClipExportError.readerFailed(underlying: reader.error)
-        }
-
-        reader.add(readerOutput)
-        guard reader.startReading() else {
-            throw ClipExportError.readerFailed(underlying: reader.error)
-        }
-
-        guard let firstSourceSampleBuffer = try await readNextDecodedSampleBuffer(output: readerOutput, reader: reader),
-              let firstSourceBuffer = CMSampleBufferGetImageBuffer(firstSourceSampleBuffer) else {
+        let firstFrameTime = CMTime(seconds: startSeconds, preferredTimescale: 60_000)
+        let firstFrameImage: CGImage
+        do {
+            firstFrameImage = try frameGenerator.copyCGImage(at: firstFrameTime, actualTime: nil)
+        } catch {
             throw ClipExportError.frameExtractionFailed(frameIndex: request.inFrame)
         }
 
-        let renderWidth = max(CVPixelBufferGetWidth(firstSourceBuffer), 1)
-        let renderHeight = max(CVPixelBufferGetHeight(firstSourceBuffer), 1)
-        let preferredTransform = try await sourceVideoTrack.load(.preferredTransform)
+        let renderWidth = max(firstFrameImage.width, 1)
+        let renderHeight = max(firstFrameImage.height, 1)
         let sourceEstimatedBitRate = Int((try await sourceVideoTrack.load(.estimatedDataRate)).rounded())
         let useSafeEncodingProfile = RuntimeEnvironment.shouldUseSafeExportEncoding
 
@@ -293,7 +272,7 @@ enum ClipExporter {
         writerInput.expectsMediaDataInRealTime = false
         writerInput.performsMultiPassEncodingIfSupported = !useSafeEncodingProfile
         writerInput.mediaTimeScale = 60_000
-        writerInput.transform = preferredTransform
+        writerInput.transform = .identity
 
         let adaptorAttributes: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA),
@@ -322,39 +301,42 @@ enum ClipExporter {
             throw ClipExportError.failedToCreatePixelBuffer
         }
 
-        defer {
-            if reader.status == .reading {
-                reader.cancelReading()
-            }
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let lastSampleableSecond = max(assetDurationSeconds - (1.0 / 120_000.0), 0)
+        var lastFrameImage = firstFrameImage
 
+        defer {
             if writer.status == .writing {
                 writer.cancelWriting()
             }
         }
 
-        var lastSourceSampleBuffer = firstSourceSampleBuffer
-
         for frameOffset in 0..<request.frameCount {
+            try Task.checkCancellation()
             try await waitUntilReady(for: writerInput, writer: writer)
 
-            let sourceSampleBuffer: CMSampleBuffer
+            let frameImage: CGImage
             if frameOffset == 0 {
-                sourceSampleBuffer = firstSourceSampleBuffer
-            } else if let nextDecodedSampleBuffer = try await readNextDecodedSampleBuffer(output: readerOutput, reader: reader) {
-                sourceSampleBuffer = nextDecodedSampleBuffer
-                lastSourceSampleBuffer = nextDecodedSampleBuffer
+                frameImage = firstFrameImage
             } else {
-                // If the source provides fewer decodable frames than requested, pad with the last frame.
-                sourceSampleBuffer = lastSourceSampleBuffer
+                let requestedSecond = startSeconds + (Double(frameOffset) / request.frameRate)
+                let sampleSecond = min(max(requestedSecond, 0), lastSampleableSecond)
+                let sampleTime = CMTime(seconds: sampleSecond, preferredTimescale: 60_000)
+
+                do {
+                    let sampledImage = try frameGenerator.copyCGImage(at: sampleTime, actualTime: nil)
+                    lastFrameImage = sampledImage
+                    frameImage = sampledImage
+                } catch {
+                    // If a timestamp cannot be decoded precisely, keep CFR output by reusing the previous frame.
+                    frameImage = lastFrameImage
+                }
             }
 
-            guard let sourceBuffer = CMSampleBufferGetImageBuffer(sourceSampleBuffer) else {
-                throw ClipExportError.frameExtractionFailed(frameIndex: request.inFrame + frameOffset)
-            }
-
-            let pixelBuffer = try clonePixelBuffer(
-                from: sourceBuffer,
-                pool: pixelBufferPool
+            let pixelBuffer = try renderPixelBuffer(
+                from: frameImage,
+                pool: pixelBufferPool,
+                colorSpace: colorSpace
             )
 
             let presentationTime: CMTime
@@ -376,9 +358,6 @@ enum ClipExporter {
         }
 
         writerInput.markAsFinished()
-        if reader.status == .reading {
-            reader.cancelReading()
-        }
         await withCheckedContinuation { continuation in
             writer.finishWriting {
                 continuation.resume()
@@ -396,35 +375,10 @@ enum ClipExporter {
         }
     }
 
-    private static func readNextDecodedSampleBuffer(
-        output: AVAssetReaderTrackOutput,
-        reader: AVAssetReader
-    ) async throws -> CMSampleBuffer? {
-        while true {
-            if let sampleBuffer = output.copyNextSampleBuffer() {
-                if CMSampleBufferGetImageBuffer(sampleBuffer) != nil {
-                    return sampleBuffer
-                }
-                continue
-            }
-
-            switch reader.status {
-            case .completed, .cancelled:
-                return nil
-            case .failed:
-                throw ClipExportError.readerFailed(underlying: reader.error)
-            case .reading, .unknown:
-                try Task.checkCancellation()
-                try await Task.sleep(nanoseconds: 1_000_000)
-            @unknown default:
-                return nil
-            }
-        }
-    }
-
-    private static func clonePixelBuffer(
-        from sourceBuffer: CVPixelBuffer,
-        pool: CVPixelBufferPool
+    private static func renderPixelBuffer(
+        from image: CGImage,
+        pool: CVPixelBufferPool,
+        colorSpace: CGColorSpace
     ) throws -> CVPixelBuffer {
         var maybeBuffer: CVPixelBuffer?
         let status = CVPixelBufferPoolCreatePixelBuffer(nil, pool, &maybeBuffer)
@@ -433,54 +387,38 @@ enum ClipExporter {
             throw ClipExportError.failedToCreatePixelBuffer
         }
 
-        let sourcePlaneCount = CVPixelBufferGetPlaneCount(sourceBuffer)
-        let destinationPlaneCount = CVPixelBufferGetPlaneCount(pixelBuffer)
-        guard sourcePlaneCount == destinationPlaneCount else {
-            throw ClipExportError.failedToCreatePixelBuffer
-        }
-
-        CVPixelBufferLockBaseAddress(sourceBuffer, .readOnly)
         CVPixelBufferLockBaseAddress(pixelBuffer, [])
         defer {
             CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
-            CVPixelBufferUnlockBaseAddress(sourceBuffer, .readOnly)
         }
 
-        if sourcePlaneCount == 0 {
-            guard let sourceBaseAddress = CVPixelBufferGetBaseAddress(sourceBuffer),
-                  let destinationBaseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else {
-                throw ClipExportError.failedToCreatePixelBuffer
-            }
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
 
-            let rowCount = CVPixelBufferGetHeight(sourceBuffer)
-            let sourceBytesPerRow = CVPixelBufferGetBytesPerRow(sourceBuffer)
-            let destinationBytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
-            let bytesToCopyPerRow = min(sourceBytesPerRow, destinationBytesPerRow)
-
-            for row in 0..<rowCount {
-                let sourceRow = sourceBaseAddress.advanced(by: row * sourceBytesPerRow)
-                let destinationRow = destinationBaseAddress.advanced(by: row * destinationBytesPerRow)
-                memcpy(destinationRow, sourceRow, bytesToCopyPerRow)
-            }
-        } else {
-            for plane in 0..<sourcePlaneCount {
-                guard let sourceBaseAddress = CVPixelBufferGetBaseAddressOfPlane(sourceBuffer, plane),
-                      let destinationBaseAddress = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, plane) else {
-                    throw ClipExportError.failedToCreatePixelBuffer
-                }
-
-                let rowCount = CVPixelBufferGetHeightOfPlane(sourceBuffer, plane)
-                let sourceBytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(sourceBuffer, plane)
-                let destinationBytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, plane)
-                let bytesToCopyPerRow = min(sourceBytesPerRow, destinationBytesPerRow)
-
-                for row in 0..<rowCount {
-                    let sourceRow = sourceBaseAddress.advanced(by: row * sourceBytesPerRow)
-                    let destinationRow = destinationBaseAddress.advanced(by: row * destinationBytesPerRow)
-                    memcpy(destinationRow, sourceRow, bytesToCopyPerRow)
-                }
-            }
+        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else {
+            throw ClipExportError.failedToCreatePixelBuffer
         }
+
+        let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
+        guard let context = CGContext(
+            data: baseAddress,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo
+        ) else {
+            throw ClipExportError.failedToCreatePixelBuffer
+        }
+
+        context.setBlendMode(.copy)
+        context.interpolationQuality = .high
+        context.clear(CGRect(x: 0, y: 0, width: width, height: height))
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: 1, y: -1)
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
 
         return pixelBuffer
     }
