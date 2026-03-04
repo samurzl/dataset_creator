@@ -189,6 +189,7 @@ final class VideoBrowserViewModel: ObservableObject {
             selectedVideoIndex = min(selectedVideoIndex, videoURLs.count - 1)
         }
 
+        schedulePreloadForAllVideos()
         loadSelectedVideo()
     }
 
@@ -258,6 +259,14 @@ final class VideoBrowserViewModel: ObservableObject {
 
         for preloadIndex in startIndex...endIndex {
             schedulePreload(for: videoURLs[preloadIndex])
+        }
+    }
+
+    private func schedulePreloadForAllVideos() {
+        guard !videoURLs.isEmpty else { return }
+
+        for sourceURL in videoURLs {
+            schedulePreload(for: sourceURL)
         }
     }
 
