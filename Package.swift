@@ -13,6 +13,11 @@ let package = Package(
         .executableTarget(
             name: "VideoDatasetBrowser",
             path: "Sources"
+        ),
+        .testTarget(
+            name: "VideoDatasetBrowserTests",
+            dependencies: ["VideoDatasetBrowser"],
+            path: "Tests/VideoDatasetBrowserTests"
         )
     ]
 )

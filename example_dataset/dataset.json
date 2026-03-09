@@ -1,0 +1,333 @@
+[
+  {
+    "caption": "In the style of japanese anime, from One Piece, a man is standing on a white cloudy floor, behind him there is a green colorful jungle, its a sunny day, the man is wearing white sneakers, light blue pants and a long white coat, viewed from the side, the camera starts showing only his lower body and slowly pans upwards, he is standing with his back to the camera, on the left side of the frame, a very strong wind is blowing on him from behind, making his coat flatter in the wind, and blowing away gusts of white dust from the white cloud floor",
+    "media_path": "positive/1.mp4",
+    "nsync": {
+      "categories": [
+        "onepiece"
+      ],
+      "negatives": [
+        {
+          "media": "synthetic",
+          "prompt": "In the style of japanese anime, from One Piece, a man is standing on a white cloudy floor, behind him there is a green colorful jungle, its a sunny day, the man is wearing white sneakers, light blue pants and a long white coat, viewed from the side, the camera starts showing only his lower body and slowly pans upwards, he is standing with his back to the camera, on the left side of the frame, a very strong wind is blowing on him from behind, making his coat flatter in the wind, and blowing away gusts of white dust from the white cloud floor",
+          "caption": "In the style of japanese anime, from One Piece, a man is standing on a white cloudy floor, behind him there is a green colorful jungle, its a sunny day, the man is wearing white sneakers, light blue pants and a long white coat, viewed from the side, the camera starts showing only his lower body and slowly pans upwards, he is standing with his back to the camera, on the left side of the frame, a very strong wind is blowing on him from behind, making his coat flatter in the wind, and blowing away gusts of white dust from the white cloud floor"
+        },
+        {
+          "media": "synthetic",
+          "prompt": "a man is standing on a white cloudy floor, behind him there is a green colorful jungle, its a sunny day, the man is wearing white sneakers, light blue pants and a long white coat, viewed from the side, the camera starts showing only his lower body and slowly pans upwards, he is standing with his back to the camera, on the left side of the frame, a very strong wind is blowing on him from behind, making his coat flatter in the wind, and blowing away gusts of white dust from the white cloud floor",
+          "caption": "In the style of japanese anime, from One Piece, a man is standing on a white cloudy floor, behind him there is a green colorful jungle, its a sunny day, the man is wearing white sneakers, light blue pants and a long white coat, viewed from the side, the camera starts showing only his lower body and slowly pans upwards, he is standing with his back to the camera, on the left side of the frame, a very strong wind is blowing on him from behind, making his coat flatter in the wind, and blowing away gusts of white dust from the white cloud floor"
+        }
+      ],
+      "anchors": [
+        {
+          "required_categories": [
+            "onepiece"
+          ]
+        },
+        {
+          "required_categories": [
+            "eva"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "caption": "In the style of japanese anime, from One Piece, a closeup of a womans face, she has orange eyes, long white hair with green tips, and wearing golden loop earrings, she has a really determined look, she is looking at something behind the camera, then she starts shouting as the camera quickly zooms out to reveal her full upper body, she is holding her arms over her head, her hair is standing up in all directions from the energy she is emitting, small lightning strikes appear around her, she has two red horns on her head, and she is wearing a white traditional top with red and black accents and a huge white and purple rope tied in a tie behind her back, she is standing in a rocky landscape at night, hard lighting on her from above her",
+    "media_path": "positive/2.mp4",
+    "nsync": {
+      "categories": [
+        "onepiece"
+      ],
+      "negatives": [
+        {
+          "media": "synthetic",
+          "prompt": "In the style of japanese anime, from One Piece, a closeup of a womans face, she has orange eyes, long white hair with green tips, and wearing golden loop earrings, she has a really determined look, she is looking at something behind the camera, then she starts shouting as the camera quickly zooms out to reveal her full upper body, she is holding her arms over her head, her hair is standing up in all directions from the energy she is emitting, small lightning strikes appear around her, she has two red horns on her head, and she is wearing a white traditional top with red and black accents and a huge white and purple rope tied in a tie behind her back, she is standing in a rocky landscape at night, hard lighting on her from above her",
+          "caption": "In the style of japanese anime, from One Piece, a closeup of a womans face, she has orange eyes, long white hair with green tips, and wearing golden loop earrings, she has a really determined look, she is looking at something behind the camera, then she starts shouting as the camera quickly zooms out to reveal her full upper body, she is holding her arms over her head, her hair is standing up in all directions from the energy she is emitting, small lightning strikes appear around her, she has two red horns on her head, and she is wearing a white traditional top with red and black accents and a huge white and purple rope tied in a tie behind her back, she is standing in a rocky landscape at night, hard lighting on her from above her"
+        },
+        {
+          "media": "synthetic",
+          "prompt": "a closeup of a womans face, she has orange eyes, long white hair with green tips, and wearing golden loop earrings, she has a really determined look, she is looking at something behind the camera, then she starts shouting as the camera quickly zooms out to reveal her full upper body, she is holding her arms over her head, her hair is standing up in all directions from the energy she is emitting, small lightning strikes appear around her, she has two red horns on her head, and she is wearing a white traditional top with red and black accents and a huge white and purple rope tied in a tie behind her back, she is standing in a rocky landscape at night, hard lighting on her from above her",
+          "caption": "In the style of japanese anime, from One Piece, a closeup of a womans face, she has orange eyes, long white hair with green tips, and wearing golden loop earrings, she has a really determined look, she is looking at something behind the camera, then she starts shouting as the camera quickly zooms out to reveal her full upper body, she is holding her arms over her head, her hair is standing up in all directions from the energy she is emitting, small lightning strikes appear around her, she has two red horns on her head, and she is wearing a white traditional top with red and black accents and a huge white and purple rope tied in a tie behind her back, she is standing in a rocky landscape at night, hard lighting on her from above her"
+        }
+      ],
+      "anchors": [
+        {
+          "required_categories": [
+            "onepiece"
+          ]
+        },
+        {
+          "required_categories": [
+            "eva"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "caption": "In the style of japanese anime, from One Piece, closeup of a man crying out loud, with tears streaming down his face, wearing a necklace of big red pearls",
+    "media_path": "positive/3.mp4",
+    "nsync": {
+      "categories": [
+        "onepiece"
+      ],
+      "negatives": [
+        {
+          "media": "synthetic",
+          "prompt": "In the style of japanese anime, from One Piece, closeup of a man crying out loud, with tears streaming down his face, wearing a necklace of big red pearls",
+          "caption": "In the style of japanese anime, from One Piece, closeup of a man crying out loud, with tears streaming down his face, wearing a necklace of big red pearls"
+        },
+        {
+          "media": "synthetic",
+          "prompt": "closeup of a man crying out loud, with tears streaming down his face, wearing a necklace of big red pearls",
+          "caption": "In the style of japanese anime, from One Piece, closeup of a man crying out loud, with tears streaming down his face, wearing a necklace of big red pearls"
+        }
+      ],
+      "anchors": [
+        {
+          "required_categories": [
+            "onepiece"
+          ]
+        },
+        {
+          "required_categories": [
+            "eva"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "caption": "In the style of japanese anime, from One Piece, In a colorful mediteranean city, a man is sitting on a wooden chair in the shade between the high houses in a narrow alleyway, he is wearing green shorts, a yellow shirt and brown sandals, his legs crossed, reading the newspaper. A little further back, a man and a boy are walking down another alleyway, above them a young child with orange hair is flying through the alleyway on a soap bubble built into a bicycle, there is a rope spanning from one window over the street into the other, lots of coloful laundry hangs on it and is slowly waving in the afternoon breeze",
+    "media_path": "positive/4.mp4",
+    "nsync": {
+      "categories": [
+        "onepiece"
+      ],
+      "negatives": [
+        {
+        {
+          "media": "synthetic",
+          "prompt": "In the style of japanese anime, from One Piece, In a colorful mediteranean city, a man is sitting on a wooden chair in the shade between the high houses in a narrow alleyway, he is wearing green shorts, a yellow shirt and brown sandals, his legs crossed, reading the newspaper. A little further back, a man and a boy are walking down another alleyway, above them a young child with orange hair is flying through the alleyway on a soap bubble built into a bicycle, there is a rope spanning from one window over the street into the other, lots of coloful laundry hangs on it and is slowly waving in the afternoon breeze",
+          "caption": "In the style of japanese anime, from One Piece, In a colorful mediteranean city, a man is sitting on a wooden chair in the shade between the high houses in a narrow alleyway, he is wearing green shorts, a yellow shirt and brown sandals, his legs crossed, reading the newspaper. A little further back, a man and a boy are walking down another alleyway, above them a young child with orange hair is flying through the alleyway on a soap bubble built into a bicycle, there is a rope spanning from one window over the street into the other, lots of coloful laundry hangs on it and is slowly waving in the afternoon breeze"
+        },
+        {
+          "media": "synthetic",
+          "prompt": "In a colorful mediteranean city, a man is sitting on a wooden chair in the shade between the high houses in a narrow alleyway, he is wearing green shorts, a yellow shirt and brown sandals, his legs crossed, reading the newspaper. A little further back, a man and a boy are walking down another alleyway, above them a young child with orange hair is flying through the alleyway on a soap bubble built into a bicycle, there is a rope spanning from one window over the street into the other, lots of coloful laundry hangs on it and is slowly waving in the afternoon breeze",
+          "caption": "In the style of japanese anime, from One Piece, In a colorful mediteranean city, a man is sitting on a wooden chair in the shade between the high houses in a narrow alleyway, he is wearing green shorts, a yellow shirt and brown sandals, his legs crossed, reading the newspaper. A little further back, a man and a boy are walking down another alleyway, above them a young child with orange hair is flying through the alleyway on a soap bubble built into a bicycle, there is a rope spanning from one window over the street into the other, lots of coloful laundry hangs on it and is slowly waving in the afternoon breeze"
+        }
+      ],
+      "anchors": [
+        {
+          "required_categories": [
+            "onepiece"
+          ]
+        },
+        {
+          "required_categories": [
+            "eva"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "caption": "In the style of japanese anime, from One Piece, a girl wearing dark blue shorts iwth white circles on the sides, brown high heel sandals, a white and blue navy shirt is walking up to her bed in her room, she seems to be carrying something heavy, then she falls face first onto the bed",
+    "media_path": "positive/5.mp4",
+    "nsync": {
+      "categories": [
+        "onepiece"
+      ],
+      "negatives": [
+        {
+          "media": "synthetic",
+          "prompt": "In the style of japanese anime, from One Piece, a girl wearing dark blue shorts iwth white circles on the sides, brown high heel sandals, a white and blue navy shirt is walking up to her bed in her room, she seems to be carrying something heavy, then she falls face first onto the bed",
+          "caption": "In the style of japanese anime, from One Piece, a girl wearing dark blue shorts iwth white circles on the sides, brown high heel sandals, a white and blue navy shirt is walking up to her bed in her room, she seems to be carrying something heavy, then she falls face first onto the bed"
+        },
+        {
+          "media": "synthetic",
+          "prompt": "a girl wearing dark blue shorts iwth white circles on the sides, brown high heel sandals, a white and blue navy shirt is walking up to her bed in her room, she seems to be carrying something heavy, then she falls face first onto the bed",
+          "caption": "In the style of japanese anime, from One Piece, a girl wearing dark blue shorts iwth white circles on the sides, brown high heel sandals, a white and blue navy shirt is walking up to her bed in her room, she seems to be carrying something heavy, then she falls face first onto the bed"
+        }
+      ],
+      "anchors": [
+        {
+          "required_categories": [
+            "onepiece"
+          ]
+        },
+        {
+          "required_categories": [
+            "eva"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "caption": "In the style of japanese anime, from Neon Genesis Evangelion, on a sunny day, a bunch of army men are standing around, behind them the blue sky and a fighter jet, among them a young man with brown hair, a red shirt, glasses and a beige vest is tumbling around with a handheld video camera held up to his eyes, talking enthusiastically",
+    "media_path": "positive/6.mp4",
+    "nsync": {
+      "categories": [
+        "eva"
+      ],
+      "negatives": [
+        {
+          "media": "synthetic",
+          "prompt": "In the style of japanese anime, from Neon Genesis Evangelion, on a sunny day, a bunch of army men are standing around, behind them the blue sky and a fighter jet, among them a young man with brown hair, a red shirt, glasses and a beige vest is tumbling around with a handheld video camera held up to his eyes, talking enthusiastically",
+          "caption": "In the style of japanese anime, from Neon Genesis Evangelion, on a sunny day, a bunch of army men are standing around, behind them the blue sky and a fighter jet, among them a young man with brown hair, a red shirt, glasses and a beige vest is tumbling around with a handheld video camera held up to his eyes, talking enthusiastically"
+        },
+        {
+          "media": "synthetic",
+          "prompt": "on a sunny day, a bunch of army men are standing around, behind them the blue sky and a fighter jet, among them a young man with brown hair, a red shirt, glasses and a beige vest is tumbling around with a handheld video camera held up to his eyes, talking enthusiastically",
+          "caption": "In the style of japanese anime, from Neon Genesis Evangelion, on a sunny day, a bunch of army men are standing around, behind them the blue sky and a fighter jet, among them a young man with brown hair, a red shirt, glasses and a beige vest is tumbling around with a handheld video camera held up to his eyes, talking enthusiastically"
+        }
+      ],
+      "anchors": [
+        {
+          "required_categories": [
+            "eva"
+          ]
+        },
+        {
+          "required_categories": [
+            "onepiece"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "caption": "In the style of japanese anime, from Neon Genesis Evangelion, viewed from below, on a blue sky day, a girl wearing a yellow dress is standing on the edge of a huge military ship, hands on the railing, looking out onto the ocean, her dress and long orange hair are waving in the strong wind, the camera is slowly zooming out",
+    "media_path": "positive/7.mp4",
+    "nsync": {
+      "categories": [
+        "eva"
+      ],
+      "negatives": [
+        {
+          "media": "synthetic",
+          "prompt": "In the style of japanese anime, from Neon Genesis Evangelion, viewed from below, on a blue sky day, a girl wearing a yellow dress is standing on the edge of a huge military ship, hands on the railing, looking out onto the ocean, her dress and long orange hair are waving in the strong wind, the camera is slowly zooming out",
+          "caption": "In the style of japanese anime, from Neon Genesis Evangelion, viewed from below, on a blue sky day, a girl wearing a yellow dress is standing on the edge of a huge military ship, hands on the railing, looking out onto the ocean, her dress and long orange hair are waving in the strong wind, the camera is slowly zooming out"
+        },
+        {
+          "media": "synthetic",
+          "prompt": "viewed from below, on a blue sky day, a girl wearing a yellow dress is standing on the edge of a huge military ship, hands on the railing, looking out onto the ocean, her dress and long orange hair are waving in the strong wind, the camera is slowly zooming out",
+          "caption": "In the style of japanese anime, from Neon Genesis Evangelion, viewed from below, on a blue sky day, a girl wearing a yellow dress is standing on the edge of a huge military ship, hands on the railing, looking out onto the ocean, her dress and long orange hair are waving in the strong wind, the camera is slowly zooming out"
+        }
+      ],
+      "anchors": [
+        {
+          "required_categories": [
+            "eva"
+          ]
+        },
+        {
+          "required_categories": [
+            "onepiece"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "caption": "In the style of japanese anime, from Neon Genesis Evangelion, in a barren landscape, behind a blue sky, a huge robot is walking along the white plain floor, behind a white dome that has a crack in it, the robot is white with red accents and has a bunch of long black antenna like things pointing out from its big back, it is swaying its arms white walking, viewed from the side",
+    "media_path": "positive/8.mp4",
+    "nsync": {
+      "categories": [
+        "eva"
+      ],
+      "negatives": [
+        {
+          "media": "synthetic",
+          "prompt": "In the style of japanese anime, from Neon Genesis Evangelion, in a barren landscape, behind a blue sky, a huge robot is walking along the white plain floor, behind a white dome that has a crack in it, the robot is white with red accents and has a bunch of long black antenna like things pointing out from its big back, it is swaying its arms white walking, viewed from the side",
+          "caption": "In the style of japanese anime, from Neon Genesis Evangelion, in a barren landscape, behind a blue sky, a huge robot is walking along the white plain floor, behind a white dome that has a crack in it, the robot is white with red accents and has a bunch of long black antenna like things pointing out from its big back, it is swaying its arms white walking, viewed from the side"
+        },
+        {
+          "media": "synthetic",
+          "prompt": "in a barren landscape, behind a blue sky, a huge robot is walking along the white plain floor, behind a white dome that has a crack in it, the robot is white with red accents and has a bunch of long black antenna like things pointing out from its big back, it is swaying its arms white walking, viewed from the side",
+          "caption": "In the style of japanese anime, from Neon Genesis Evangelion, in a barren landscape, behind a blue sky, a huge robot is walking along the white plain floor, behind a white dome that has a crack in it, the robot is white with red accents and has a bunch of long black antenna like things pointing out from its big back, it is swaying its arms white walking, viewed from the side"
+        }
+      ],
+      "anchors": [
+        {
+          "required_categories": [
+            "eva"
+          ]
+        },
+        {
+          "required_categories": [
+            "onepiece"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "caption": "In the style of japanese anime, from Neon Genesis Evangelion, closeup of a girl with long orange hair laying on her back on a white floor, she is wearing a red body suit with the number 02 written on is, two arms are choking and strangling her, she has a terrified look on her face but shes not resisting, the arms are jittering",
+    "media_path": "positive/9.mp4",
+    "nsync": {
+      "categories": [
+        "eva"
+      ],
+      "negatives": [
+        {
+          "media": "synthetic",
+          "prompt": "In the style of japanese anime, from Neon Genesis Evangelion, closeup of a girl with long orange hair laying on her back on a white floor, she is wearing a red body suit with the number 02 written on is, two arms are choking and strangling her, she has a terrified look on her face but shes not resisting, the arms are jittering",
+          "caption": "In the style of japanese anime, from Neon Genesis Evangelion, closeup of a girl with long orange hair laying on her back on a white floor, she is wearing a red body suit with the number 02 written on is, two arms are choking and strangling her, she has a terrified look on her face but shes not resisting, the arms are jittering"
+        },
+        {
+          "media": "synthetic",
+          "prompt": "closeup of a girl with long orange hair laying on her back on a white floor, she is wearing a red body suit with the number 02 written on is, two arms are choking and strangling her, she has a terrified look on her face but shes not resisting, the arms are jittering",
+          "caption": "In the style of japanese anime, from Neon Genesis Evangelion, closeup of a girl with long orange hair laying on her back on a white floor, she is wearing a red body suit with the number 02 written on is, two arms are choking and strangling her, she has a terrified look on her face but shes not resisting, the arms are jittering"
+        }
+      ],
+      "anchors": [
+        {
+          "required_categories": [
+            "eva"
+          ]
+        },
+        {
+          "required_categories": [
+            "onepiece"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "caption": "In the style of japanese anime, from Neon Genesis Evangelion, a girl with shoulder length hair wearing a purple top, a dark purple skirt with belt and red stockings is sitting in a metal cell on a bench, hunched over with her arms on her knees, she leans forward onto her arms and then start standing up",
+    "media_path": "positive/10.mp4",
+    "nsync": {
+      "categories": [
+        "eva"
+      ],
+      "negatives": [
+        {
+          "media": "synthetic",
+          "prompt": "In the style of japanese anime, from Neon Genesis Evangelion, a girl with shoulder length hair wearing a purple top, a dark purple skirt with belt and red stockings is sitting in a metal cell on a bench, hunched over with her arms on her knees, she leans forward onto her arms and then start standing up",
+          "caption": "In the style of japanese anime, from Neon Genesis Evangelion, a girl with shoulder length hair wearing a purple top, a dark purple skirt with belt and red stockings is sitting in a metal cell on a bench, hunched over with her arms on her knees, she leans forward onto her arms and then start standing up"
+        },
+        {
+          "media": "synthetic",
+          "prompt": "a girl with shoulder length hair wearing a purple top, a dark purple skirt with belt and red stockings is sitting in a metal cell on a bench, hunched over with her arms on her knees, she leans forward onto her arms and then start standing up",
+          "caption": "In the style of japanese anime, from Neon Genesis Evangelion, a girl with shoulder length hair wearing a purple top, a dark purple skirt with belt and red stockings is sitting in a metal cell on a bench, hunched over with her arms on her knees, she leans forward onto her arms and then start standing up"
+        }
+      ],
+      "anchors": [
+        {
+          "required_categories": [
+            "eva"
+          ]
+        },
+        {
+          "required_categories": [
+            "onepiece"
+          ]
+        }
+      ]
+    }
+  }
+]

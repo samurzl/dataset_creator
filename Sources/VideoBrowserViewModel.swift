@@ -25,6 +25,7 @@ final class VideoBrowserViewModel: ObservableObject {
     private let defaults = UserDefaults.standard
     private let fileManager = FileManager.default
     private let inputVideoResampler = InputVideoResampler(targetFrameRate: 16)
+    private let datasetAuthoringService = DatasetAuthoringService()
     private var cancellables: Set<AnyCancellable> = []
     private var activeLoadTask: Task<Void, Never>?
     private var activeSelectionToken = UUID()
@@ -108,7 +109,7 @@ final class VideoBrowserViewModel: ObservableObject {
         )
     }
 
-    func exportClip(request: ClipExportRequest, caption: String) async throws -> URL {
+    func exportClip(request: ClipExportRequest, input: DatasetRowInput) async throws -> URL {
         guard !outputFolderPath.isEmpty else {
             throw ClipExportError.outputFolderNotConfigured
         }
@@ -120,10 +121,10 @@ final class VideoBrowserViewModel: ObservableObject {
             throw ClipExportError.outputDirectoryMissing
         }
 
-        return try await ClipExporter.exportClip(
+        return try await datasetAuthoringService.exportClip(
             request: request,
-            caption: caption,
-            to: outputDirectory
+            input: input,
+            datasetRootURL: outputDirectory
         )
     }
 

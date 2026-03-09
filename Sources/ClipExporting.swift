@@ -66,9 +66,9 @@ enum ClipExportError: LocalizedError {
         case let .frameCountMismatch(expected, actual):
             return "Exported frame count mismatch. Expected \(expected), got \(actual)."
         case .outputDirectoryMissing:
-            return "Output folder does not exist."
+            return "Dataset folder does not exist."
         case .outputFolderNotConfigured:
-            return "Set an output folder before exporting."
+            return "Set a dataset folder before exporting."
         }
     }
 }
@@ -137,8 +137,7 @@ enum ClipExporter {
 
     static func exportClip(
         request: ClipExportRequest,
-        caption: String,
-        to outputDirectory: URL
+        to outputURL: URL
     ) async throws -> URL {
         guard request.frameRate > 0 else {
             throw ClipExportError.invalidFrameRate
@@ -149,45 +148,19 @@ enum ClipExporter {
         }
 
         let fileManager = FileManager.default
+        let outputDirectory = outputURL.deletingLastPathComponent()
         guard fileManager.fileExists(atPath: outputDirectory.path) else {
             throw ClipExportError.outputDirectoryMissing
         }
 
-        let baseName = try nextOutputBaseName(in: outputDirectory)
-        let outputVideoURL = outputDirectory.appendingPathComponent(baseName).appendingPathExtension("mp4")
-        let outputCaptionURL = outputDirectory.appendingPathComponent(baseName).appendingPathExtension("txt")
-
         do {
-            try await writeVideoClip(request: request, to: outputVideoURL, timingMode: .sourceRate)
+            try await writeVideoClip(request: request, to: outputURL, timingMode: .sourceRate)
         } catch ClipExportError.frameCountMismatch {
             // Some sources/encoders retime variable-rate timestamps; retry with strict integer CFR timeline.
-            try await writeVideoClip(request: request, to: outputVideoURL, timingMode: .integerRate)
+            try await writeVideoClip(request: request, to: outputURL, timingMode: .integerRate)
         }
 
-        do {
-            try caption.write(to: outputCaptionURL, atomically: true, encoding: .utf8)
-        } catch {
-            try? fileManager.removeItem(at: outputVideoURL)
-            throw error
-        }
-
-        return outputVideoURL
-    }
-
-    private static func nextOutputBaseName(in outputDirectory: URL) throws -> String {
-        let fileManager = FileManager.default
-        let urls = try fileManager.contentsOfDirectory(
-            at: outputDirectory,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        )
-
-        let existingIndices = urls
-            .filter { $0.pathExtension.lowercased() == "mp4" }
-            .compactMap { Int($0.deletingPathExtension().lastPathComponent) }
-
-        let nextIndex = (existingIndices.max() ?? 0) + 1
-        return String(nextIndex)
+        return outputURL
     }
 
     private static func writeVideoClip(

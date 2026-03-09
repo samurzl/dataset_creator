@@ -19,7 +19,7 @@ final class ExportWindowCoordinator: NSObject, ObservableObject, NSWindowDelegat
 
     func present(
         request: ClipExportRequest,
-        onExport: @escaping (String) async throws -> Void
+        onExport: @escaping (DatasetRowInput) async throws -> Void
     ) {
         close()
 
@@ -33,7 +33,7 @@ final class ExportWindowCoordinator: NSObject, ObservableObject, NSWindowDelegat
 
         let hostingController = NSHostingController(rootView: rootView)
         let exportWindow = NSWindow(contentViewController: hostingController)
-        exportWindow.title = "Export Clip"
+        exportWindow.title = "Add Dataset Row"
         exportWindow.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         exportWindow.delegate = self
         exportWindow.minSize = .zero
@@ -101,7 +101,7 @@ struct ContentView: View {
         .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onDisappear(perform: exportWindowCoordinator.close)
-        .alert("Export", isPresented: exportAlertIsPresented) {
+        .alert("Dataset", isPresented: exportAlertIsPresented) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(exportAlertMessage ?? "")
@@ -138,7 +138,7 @@ struct ContentView: View {
                 Button("Next", action: viewModel.selectNextVideo)
                     .disabled(!viewModel.hasNextVideo)
 
-                Button("Export…", action: beginExport)
+                Button("Add to Dataset…", action: beginExport)
                     .disabled(!canOpenExportSheet)
             }
         }
@@ -180,7 +180,7 @@ struct ContentView: View {
             )
 
             folderRow(
-                title: "Output Folder",
+                title: "Dataset Folder",
                 path: viewModel.outputFolderPath,
                 action: viewModel.chooseOutputFolder
             )
@@ -229,8 +229,8 @@ struct ContentView: View {
     private func beginExport() {
         do {
             let request = try viewModel.makeExportRequest()
-            exportWindowCoordinator.present(request: request) { caption in
-                _ = try await viewModel.exportClip(request: request, caption: caption)
+            exportWindowCoordinator.present(request: request) { input in
+                _ = try await viewModel.exportClip(request: request, input: input)
             }
         } catch {
             exportAlertMessage = error.localizedDescription
