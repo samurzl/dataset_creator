@@ -78,6 +78,39 @@ final class DatasetAuthoringTests: XCTestCase {
         XCTAssertEqual(preparedAppend.rows[0].nsync.anchors[0].requiredCategories, ["studio", "cat", "cinematic"])
     }
 
+    func testQuickExportInputBuildsDerivedNSyncTemplate() {
+        let input = DatasetRowInput(
+            originalCaption: "original caption",
+            missingCaption: "missing caption",
+            category: "cat"
+        )
+
+        XCTAssertEqual(input.caption, "original caption")
+        XCTAssertEqual(input.nsync.categories, ["cat"])
+        XCTAssertEqual(
+            input.nsync.negatives,
+            [
+                DatasetNegative(
+                    media: .synthetic,
+                    caption: "original caption",
+                    prompt: "original caption"
+                ),
+                DatasetNegative(
+                    media: .synthetic,
+                    caption: "original caption",
+                    prompt: "missing caption"
+                )
+            ]
+        )
+        XCTAssertEqual(
+            input.nsync.anchors,
+            [
+                DatasetAnchor(requiredCategories: ["cat"], extraRandomCategory: false),
+                DatasetAnchor(requiredCategories: ["cat"], extraRandomCategory: true)
+            ]
+        )
+    }
+
     func testSyntheticPromptRequiredAndPositivePromptForbidden() throws {
         let rootURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: rootURL) }

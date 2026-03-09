@@ -5,6 +5,33 @@ struct DatasetRowInput: Equatable {
     var nsync: DatasetNSync
 }
 
+extension DatasetRowInput {
+    init(originalCaption: String, missingCaption: String, category: String) {
+        self.init(
+            caption: originalCaption,
+            nsync: DatasetNSync(
+                categories: [category],
+                negatives: [
+                    DatasetNegative(
+                        media: .synthetic,
+                        caption: originalCaption,
+                        prompt: originalCaption
+                    ),
+                    DatasetNegative(
+                        media: .synthetic,
+                        caption: originalCaption,
+                        prompt: missingCaption
+                    )
+                ],
+                anchors: [
+                    DatasetAnchor(requiredCategories: [category], extraRandomCategory: false),
+                    DatasetAnchor(requiredCategories: [category], extraRandomCategory: true)
+                ]
+            )
+        )
+    }
+}
+
 struct DatasetRow: Codable, Equatable {
     var caption: String
     var mediaPath: String

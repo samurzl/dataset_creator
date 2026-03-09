@@ -12,7 +12,7 @@ Native macOS GUI app to browse videos from an input folder, trim clips, and auth
 - Timeline slider and controls to move through videos in the folder.
 - Export selected clips into a dataset root under `positive/<n>.mp4`.
 - Append validated Advanced NSYNC rows to `dataset.json`.
-- Author per-row captions, categories, negatives, and anchors from the export sheet.
+- Author per-row original caption, missing caption, and category from the export sheet, with negatives and anchors generated automatically.
 
 ## Dataset output
 

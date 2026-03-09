@@ -64,38 +64,19 @@ final class ExportPreviewController: ObservableObject {
     }
 }
 
-private struct NegativeDraft: Identifiable {
-    let id = UUID()
-    var media: DatasetNegativeMedia = .positive
-    var caption = ""
-    var prompt = ""
-}
-
-private struct AnchorDraft: Identifiable {
-    let id = UUID()
-    var requiredCategories = ""
-    var extraRandomCategory = false
-}
-
 private enum ExportFormError: LocalizedError {
-    case blankCaption
-    case missingCategories
-    case blankNegativeCaption(index: Int)
-    case blankNegativePrompt(index: Int)
-    case blankAnchorCategories(index: Int)
+    case blankOriginalCaption
+    case blankMissingCaption
+    case blankCategory
 
     var errorDescription: String? {
         switch self {
-        case .blankCaption:
-            return "Caption is required."
-        case .missingCategories:
-            return "Add at least one category."
-        case let .blankNegativeCaption(index):
-            return "Negative \(index + 1) requires a caption."
-        case let .blankNegativePrompt(index):
-            return "Negative \(index + 1) requires a prompt when media is synthetic."
-        case let .blankAnchorCategories(index):
-            return "Anchor \(index + 1) requires at least one category."
+        case .blankOriginalCaption:
+            return "Original caption is required."
+        case .blankMissingCaption:
+            return "Missing caption is required."
+        case .blankCategory:
+            return "Category is required."
         }
     }
 }
@@ -106,10 +87,9 @@ struct ExportClipSheet: View {
     let onExport: (DatasetRowInput) async throws -> Void
 
     @StateObject private var previewController = ExportPreviewController()
-    @State private var captionText = ""
-    @State private var categoriesText = ""
-    @State private var negatives: [NegativeDraft] = [NegativeDraft()]
-    @State private var anchors: [AnchorDraft] = []
+    @State private var originalCaptionText = ""
+    @State private var missingCaptionText = ""
+    @State private var categoryText = ""
     @State private var isExporting = false
     @State private var exportErrorMessage: String?
     @State private var exportTask: Task<Void, Never>?
@@ -127,10 +107,10 @@ struct ExportClipSheet: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    captionSection
-                    categoriesSection
-                    negativesSection
-                    anchorsSection
+                    originalCaptionSection
+                    missingCaptionSection
+                    categorySection
+                    generatedSection
 
                     if isLivePreviewEnabled, let loadingErrorMessage = previewController.loadingErrorMessage {
                         Text("Preview error: \(loadingErrorMessage)")
@@ -188,66 +168,53 @@ struct ExportClipSheet: View {
         }
     }
 
-    private var captionSection: some View {
+    private var originalCaptionSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("Caption")
-            textEditor(text: $captionText, minHeight: 110)
-        }
-    }
-
-    private var categoriesSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("Categories")
-            Text("Comma or newline separated. Duplicate entries are deduplicated automatically.")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
+            sectionTitle("Original Caption")
             textEditor(
-                text: $categoriesText,
-                minHeight: 72,
-                placeholder: "cat, cinematic, studio"
+                text: $originalCaptionText,
+                minHeight: 110,
+                placeholder: "Positive caption and base negative caption"
             )
         }
     }
 
-    private var negativesSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                sectionTitle("Negatives")
-                Spacer()
-                Button("Add Negative", action: addNegative)
-            }
-
-            Text("Each row requires at least one negative.")
+    private var missingCaptionSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionTitle("Missing Caption")
+            Text("Used as the prompt for the second synthetic negative.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
-
-            ForEach(Array(negatives.enumerated()), id: \.element.id) { index, negative in
-                negativeCard(index: index, negative: negative)
-            }
+            textEditor(
+                text: $missingCaptionText,
+                minHeight: 110,
+                placeholder: "Prompt for the missing-caption synthetic negative"
+            )
         }
     }
 
-    private var anchorsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                sectionTitle("Anchors")
-                Spacer()
-                Button("Add Anchor", action: addAnchor)
-            }
-
-            Text("Anchors are optional and always reuse another positive sample.")
+    private var categorySection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionTitle("Category")
+            Text("Saved as the row category and reused for both generated anchors.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
+            textField(text: $categoryText, placeholder: "cat")
+        }
+    }
 
-            if anchors.isEmpty {
-                Text("No anchors added.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(Array(anchors.enumerated()), id: \.element.id) { index, anchor in
-                    anchorCard(index: index, anchor: anchor)
-                }
-            }
+    private var generatedSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionTitle("Generated")
+            Text("This export automatically saves:")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+            generatedLine("Positive caption", "original caption")
+            generatedLine("Category", "[category]")
+            generatedLine("Negative 1", "synthetic, caption = original caption, prompt = original caption")
+            generatedLine("Negative 2", "synthetic, caption = original caption, prompt = missing caption")
+            generatedLine("Anchor 1", "required categories = [category]")
+            generatedLine("Anchor 2", "required categories = [category], allow random = true")
         }
     }
 
@@ -273,82 +240,18 @@ struct ExportClipSheet: View {
         }
     }
 
-    private func negativeCard(index: Int, negative: NegativeDraft) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Negative \(index + 1)")
-                    .font(.system(size: 13, weight: .semibold))
-                Spacer()
-                Button("Remove") {
-                    removeNegative(id: negative.id)
-                }
-                .disabled(negatives.count == 1)
-            }
-
-            Picker("Media", selection: bindingForNegative(id: negative.id).media) {
-                ForEach(DatasetNegativeMedia.allCases, id: \.self) { media in
-                    Text(media.label).tag(media)
-                }
-            }
-            .pickerStyle(.segmented)
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Caption")
-                    .font(.system(size: 12, weight: .medium))
-                textEditor(
-                    text: bindingForNegative(id: negative.id).caption,
-                    minHeight: 72,
-                    placeholder: "Negative caption"
-                )
-            }
-
-            if negative.media == .synthetic {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Prompt")
-                        .font(.system(size: 12, weight: .medium))
-                    textEditor(
-                        text: bindingForNegative(id: negative.id).prompt,
-                        minHeight: 72,
-                        placeholder: "Synthetic media prompt"
-                    )
-                }
-            }
+    private func generatedLine(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.system(size: 12, weight: .medium))
+            Text(value)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(.secondary)
         }
-        .padding(12)
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.secondary.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-    }
-
-    private func anchorCard(index: Int, anchor: AnchorDraft) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Anchor \(index + 1)")
-                    .font(.system(size: 13, weight: .semibold))
-                Spacer()
-                Button("Remove") {
-                    removeAnchor(id: anchor.id)
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Required Categories")
-                    .font(.system(size: 12, weight: .medium))
-                textEditor(
-                    text: bindingForAnchor(id: anchor.id).requiredCategories,
-                    minHeight: 72,
-                    placeholder: "cat, studio"
-                )
-            }
-
-            Toggle(
-                "Allow one extra random category",
-                isOn: bindingForAnchor(id: anchor.id).extraRandomCategory
-            )
-            .toggleStyle(.checkbox)
-        }
-        .padding(12)
-        .background(Color.secondary.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private func sectionTitle(_ title: String) -> some View {
@@ -383,47 +286,16 @@ struct ExportClipSheet: View {
         )
     }
 
-    private func addNegative() {
-        negatives.append(NegativeDraft())
-    }
-
-    private func removeNegative(id: UUID) {
-        negatives.removeAll { $0.id == id }
-        if negatives.isEmpty {
-            negatives = [NegativeDraft()]
-        }
-    }
-
-    private func addAnchor() {
-        anchors.append(AnchorDraft())
-    }
-
-    private func removeAnchor(id: UUID) {
-        anchors.removeAll { $0.id == id }
-    }
-
-    private func bindingForNegative(id: UUID) -> Binding<NegativeDraft> {
-        Binding(
-            get: {
-                negatives.first(where: { $0.id == id }) ?? NegativeDraft()
-            },
-            set: { updatedValue in
-                guard let index = negatives.firstIndex(where: { $0.id == id }) else { return }
-                negatives[index] = updatedValue
-            }
-        )
-    }
-
-    private func bindingForAnchor(id: UUID) -> Binding<AnchorDraft> {
-        Binding(
-            get: {
-                anchors.first(where: { $0.id == id }) ?? AnchorDraft()
-            },
-            set: { updatedValue in
-                guard let index = anchors.firstIndex(where: { $0.id == id }) else { return }
-                anchors[index] = updatedValue
-            }
-        )
+    private func textField(text: Binding<String>, placeholder: String) -> some View {
+        TextField(placeholder, text: text)
+            .textFieldStyle(.plain)
+            .font(.system(size: 13, design: .monospaced))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 10)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(Color.secondary.opacity(0.5), lineWidth: 1)
+            )
     }
 
     private func performExport() {
@@ -463,79 +335,25 @@ struct ExportClipSheet: View {
     }
 
     private func buildDatasetRowInput() throws -> DatasetRowInput {
-        let caption = captionText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !caption.isEmpty else {
-            throw ExportFormError.blankCaption
+        let originalCaption = originalCaptionText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !originalCaption.isEmpty else {
+            throw ExportFormError.blankOriginalCaption
         }
 
-        let categories = parseUniqueItems(from: categoriesText)
-        guard !categories.isEmpty else {
-            throw ExportFormError.missingCategories
+        let missingCaption = missingCaptionText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !missingCaption.isEmpty else {
+            throw ExportFormError.blankMissingCaption
         }
 
-        let negativeValues = try negatives.enumerated().map { index, draft in
-            let caption = draft.caption.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !caption.isEmpty else {
-                throw ExportFormError.blankNegativeCaption(index: index)
-            }
-
-            switch draft.media {
-            case .positive:
-                return DatasetNegative(media: .positive, caption: caption, prompt: nil)
-            case .synthetic:
-                let prompt = draft.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !prompt.isEmpty else {
-                    throw ExportFormError.blankNegativePrompt(index: index)
-                }
-                return DatasetNegative(media: .synthetic, caption: caption, prompt: prompt)
-            }
-        }
-
-        let anchorValues = try anchors.enumerated().map { index, draft in
-            let requiredCategories = parseUniqueItems(from: draft.requiredCategories)
-            guard !requiredCategories.isEmpty else {
-                throw ExportFormError.blankAnchorCategories(index: index)
-            }
-            return DatasetAnchor(
-                requiredCategories: requiredCategories,
-                extraRandomCategory: draft.extraRandomCategory
-            )
+        let category = categoryText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !category.isEmpty else {
+            throw ExportFormError.blankCategory
         }
 
         return DatasetRowInput(
-            caption: caption,
-            nsync: DatasetNSync(
-                categories: categories,
-                negatives: negativeValues,
-                anchors: anchorValues
-            )
+            originalCaption: originalCaption,
+            missingCaption: missingCaption,
+            category: category
         )
-    }
-
-    private func parseUniqueItems(from text: String) -> [String] {
-        let separators = CharacterSet(charactersIn: ",\n")
-        var values: [String] = []
-        var seen: Set<String> = []
-
-        for candidate in text.components(separatedBy: separators) {
-            let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { continue }
-            if seen.insert(trimmed).inserted {
-                values.append(trimmed)
-            }
-        }
-
-        return values
-    }
-}
-
-private extension DatasetNegativeMedia {
-    var label: String {
-        switch self {
-        case .positive:
-            return "positive"
-        case .synthetic:
-            return "synthetic"
-        }
     }
 }
