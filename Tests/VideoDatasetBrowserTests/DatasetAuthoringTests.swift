@@ -82,11 +82,11 @@ final class DatasetAuthoringTests: XCTestCase {
         let input = DatasetRowInput(
             originalCaption: "original caption",
             missingCaption: "missing caption",
-            category: "cat"
+            categories: ["cat", "studio"]
         )
 
         XCTAssertEqual(input.caption, "original caption")
-        XCTAssertEqual(input.nsync.categories, ["cat"])
+        XCTAssertEqual(input.nsync.categories, ["cat", "studio"])
         XCTAssertEqual(
             input.nsync.negatives,
             [
@@ -106,7 +106,9 @@ final class DatasetAuthoringTests: XCTestCase {
             input.nsync.anchors,
             [
                 DatasetAnchor(requiredCategories: ["cat"], extraRandomCategory: false),
-                DatasetAnchor(requiredCategories: ["cat"], extraRandomCategory: true)
+                DatasetAnchor(requiredCategories: ["cat"], extraRandomCategory: true),
+                DatasetAnchor(requiredCategories: ["studio"], extraRandomCategory: false),
+                DatasetAnchor(requiredCategories: ["studio"], extraRandomCategory: true)
             ]
         )
     }

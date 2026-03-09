@@ -196,10 +196,14 @@ struct ExportClipSheet: View {
     private var categorySection: some View {
         VStack(alignment: .leading, spacing: 8) {
             sectionTitle("Category")
-            Text("Saved as the row category and reused for both generated anchors.")
+            Text("Comma or newline separated. Each category generates two anchors.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
-            textField(text: $categoryText, placeholder: "cat")
+            textEditor(
+                text: $categoryText,
+                minHeight: 72,
+                placeholder: "cat, studio"
+            )
         }
     }
 
@@ -210,11 +214,10 @@ struct ExportClipSheet: View {
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
             generatedLine("Positive caption", "original caption")
-            generatedLine("Category", "[category]")
+            generatedLine("Categories", "[all provided categories]")
             generatedLine("Negative 1", "synthetic, caption = original caption, prompt = original caption")
             generatedLine("Negative 2", "synthetic, caption = original caption, prompt = missing caption")
-            generatedLine("Anchor 1", "required categories = [category]")
-            generatedLine("Anchor 2", "required categories = [category], allow random = true")
+            generatedLine("Anchors", "for each category: one anchor with [category], one with [category] + allow random")
         }
     }
 
@@ -286,18 +289,6 @@ struct ExportClipSheet: View {
         )
     }
 
-    private func textField(text: Binding<String>, placeholder: String) -> some View {
-        TextField(placeholder, text: text)
-            .textFieldStyle(.plain)
-            .font(.system(size: 13, design: .monospaced))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 10)
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(Color.secondary.opacity(0.5), lineWidth: 1)
-            )
-    }
-
     private func performExport() {
         guard !isExporting else { return }
 
@@ -345,15 +336,31 @@ struct ExportClipSheet: View {
             throw ExportFormError.blankMissingCaption
         }
 
-        let category = categoryText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !category.isEmpty else {
+        let categories = parseUniqueItems(from: categoryText)
+        guard !categories.isEmpty else {
             throw ExportFormError.blankCategory
         }
 
         return DatasetRowInput(
             originalCaption: originalCaption,
             missingCaption: missingCaption,
-            category: category
+            categories: categories
         )
+    }
+
+    private func parseUniqueItems(from text: String) -> [String] {
+        let separators = CharacterSet(charactersIn: ",\n")
+        var values: [String] = []
+        var seen: Set<String> = []
+
+        for candidate in text.components(separatedBy: separators) {
+            let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            if seen.insert(trimmed).inserted {
+                values.append(trimmed)
+            }
+        }
+
+        return values
     }
 }

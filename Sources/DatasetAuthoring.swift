@@ -6,11 +6,11 @@ struct DatasetRowInput: Equatable {
 }
 
 extension DatasetRowInput {
-    init(originalCaption: String, missingCaption: String, category: String) {
+    init(originalCaption: String, missingCaption: String, categories: [String]) {
         self.init(
             caption: originalCaption,
             nsync: DatasetNSync(
-                categories: [category],
+                categories: categories,
                 negatives: [
                     DatasetNegative(
                         media: .synthetic,
@@ -23,10 +23,12 @@ extension DatasetRowInput {
                         prompt: missingCaption
                     )
                 ],
-                anchors: [
-                    DatasetAnchor(requiredCategories: [category], extraRandomCategory: false),
-                    DatasetAnchor(requiredCategories: [category], extraRandomCategory: true)
-                ]
+                anchors: categories.flatMap { category in
+                    [
+                        DatasetAnchor(requiredCategories: [category], extraRandomCategory: false),
+                        DatasetAnchor(requiredCategories: [category], extraRandomCategory: true)
+                    ]
+                }
             )
         )
     }
