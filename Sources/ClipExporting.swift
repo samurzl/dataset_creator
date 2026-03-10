@@ -1,3 +1,4 @@
+import AudioToolbox
 import AVFoundation
 import CoreGraphics
 import CoreVideo
@@ -52,11 +53,11 @@ enum ClipExportError: LocalizedError {
         case .failedToCreateCompositionTrack:
             return "Failed to create a temporary composition track."
         case .failedToCreateWriterInput:
-            return "Failed to configure the video writer."
+            return "Failed to configure the clip writer."
         case .failedToCreatePixelBuffer:
             return "Failed to allocate a frame buffer for export."
         case .writerAppendFailed:
-            return "Failed while writing one of the output frames."
+            return "Failed while writing the output clip."
         case let .writerFailed(underlying):
             return underlying?.localizedDescription ?? "The exporter failed to write the output clip."
         case let .readerFailed(underlying):
@@ -77,6 +78,12 @@ enum ClipExporter {
     private enum ExportTimingMode {
         case sourceRate
         case integerRate
+    }
+
+    private struct AudioExportContext {
+        let reader: AVAssetReader
+        let output: AVAssetReaderTrackOutput
+        let writerInput: AVAssetWriterInput
     }
 
     @MainActor
@@ -189,6 +196,7 @@ enum ClipExporter {
         guard availableDurationSeconds > 0 else {
             throw ClipExportError.invalidSourceRange
         }
+        let safeAudioDurationSeconds = min(request.durationSeconds, availableDurationSeconds)
 
         let reader = try AVAssetReader(asset: sourceAsset)
         reader.timeRange = CMTimeRange(
@@ -279,17 +287,34 @@ enum ClipExporter {
             assetWriterInput: writerInput,
             sourcePixelBufferAttributes: adaptorAttributes
         )
+        let audioExportContext = try await makeAudioExportContext(
+            sourceAsset: sourceAsset,
+            startSeconds: startSeconds,
+            durationSeconds: safeAudioDurationSeconds
+        )
 
         guard writer.canAdd(writerInput) else {
             throw ClipExportError.failedToCreateWriterInput
         }
 
         writer.add(writerInput)
+        if let audioWriterInput = audioExportContext?.writerInput {
+            guard writer.canAdd(audioWriterInput) else {
+                throw ClipExportError.failedToCreateWriterInput
+            }
+            writer.add(audioWriterInput)
+        }
 
         guard writer.startWriting() else {
             throw ClipExportError.writerFailed(underlying: writer.error)
         }
         writer.startSession(atSourceTime: .zero)
+
+        if let audioReader = audioExportContext?.reader {
+            guard audioReader.startReading() else {
+                throw ClipExportError.readerFailed(underlying: audioReader.error)
+            }
+        }
 
         guard let pixelBufferPool = adaptor.pixelBufferPool else {
             throw ClipExportError.failedToCreatePixelBuffer
@@ -298,6 +323,11 @@ enum ClipExporter {
         defer {
             if reader.status == .reading {
                 reader.cancelReading()
+            }
+
+            if let audioReader = audioExportContext?.reader,
+               audioReader.status == .reading {
+                audioReader.cancelReading()
             }
 
             if writer.status == .writing {
@@ -351,6 +381,15 @@ enum ClipExporter {
         writerInput.markAsFinished()
         if reader.status == .reading {
             reader.cancelReading()
+        }
+        if let audioExportContext {
+            try await appendAudioSamples(
+                from: audioExportContext.output,
+                reader: audioExportContext.reader,
+                to: audioExportContext.writerInput,
+                writer: writer
+            )
+            audioExportContext.writerInput.markAsFinished()
         }
         await withCheckedContinuation { continuation in
             writer.finishWriting {
@@ -468,6 +507,113 @@ enum ClipExporter {
             }
             try Task.checkCancellation()
             try await Task.sleep(nanoseconds: 1_000_000)
+        }
+    }
+
+    private static func makeAudioExportContext(
+        sourceAsset: AVAsset,
+        startSeconds: Double,
+        durationSeconds: Double
+    ) async throws -> AudioExportContext? {
+        guard durationSeconds > 0 else {
+            return nil
+        }
+
+        let audioTracks = try await sourceAsset.loadTracks(withMediaType: .audio)
+        guard let sourceAudioTrack = audioTracks.first else {
+            return nil
+        }
+
+        let composition = AVMutableComposition()
+        guard let compositionAudioTrack = composition.addMutableTrack(
+            withMediaType: .audio,
+            preferredTrackID: kCMPersistentTrackID_Invalid
+        ) else {
+            throw ClipExportError.failedToCreateCompositionTrack
+        }
+
+        let timeRange = CMTimeRange(
+            start: CMTime(seconds: startSeconds, preferredTimescale: 60_000),
+            duration: CMTime(seconds: durationSeconds, preferredTimescale: 60_000)
+        )
+        try compositionAudioTrack.insertTimeRange(timeRange, of: sourceAudioTrack, at: .zero)
+
+        let compositionAudioTracks = try await composition.loadTracks(withMediaType: .audio)
+        guard let trimmedAudioTrack = compositionAudioTracks.first else {
+            return nil
+        }
+
+        let reader = try AVAssetReader(asset: composition)
+        let outputSettings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsNonInterleaved: false
+        ]
+        let output = AVAssetReaderTrackOutput(track: trimmedAudioTrack, outputSettings: outputSettings)
+        output.alwaysCopiesSampleData = false
+
+        guard reader.canAdd(output) else {
+            throw ClipExportError.readerFailed(underlying: reader.error)
+        }
+        reader.add(output)
+
+        let writerInput = AVAssetWriterInput(
+            mediaType: .audio,
+            outputSettings: try await makeAudioOutputSettings(for: sourceAudioTrack)
+        )
+        writerInput.expectsMediaDataInRealTime = false
+
+        return AudioExportContext(reader: reader, output: output, writerInput: writerInput)
+    }
+
+    private static func makeAudioOutputSettings(for sourceAudioTrack: AVAssetTrack) async throws -> [String: Any] {
+        let formatDescriptions = try await sourceAudioTrack.load(.formatDescriptions)
+        let audioFormat = formatDescriptions.lazy.compactMap { description in
+            AVAudioFormat(cmAudioFormatDescription: description)
+        }.first
+        let sampleRate = audioFormat?.sampleRate ?? 44_100
+        let channelCount = max(Int(audioFormat?.channelCount ?? 2), 1)
+        let bitRate = min(max(channelCount * 96_000, 64_000), 320_000)
+
+        return [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: channelCount,
+            AVEncoderBitRateKey: bitRate
+        ]
+    }
+
+    private static func appendAudioSamples(
+        from output: AVAssetReaderTrackOutput,
+        reader: AVAssetReader,
+        to input: AVAssetWriterInput,
+        writer: AVAssetWriter
+    ) async throws {
+        while true {
+            if let sampleBuffer = output.copyNextSampleBuffer() {
+                try await waitUntilReady(for: input, writer: writer)
+                guard input.append(sampleBuffer) else {
+                    if writer.status == .failed {
+                        throw ClipExportError.writerFailed(underlying: writer.error)
+                    }
+                    throw ClipExportError.writerAppendFailed
+                }
+                continue
+            }
+
+            switch reader.status {
+            case .completed, .cancelled:
+                return
+            case .failed:
+                throw ClipExportError.readerFailed(underlying: reader.error)
+            case .reading, .unknown:
+                try Task.checkCancellation()
+                try await Task.sleep(nanoseconds: 1_000_000)
+            @unknown default:
+                return
+            }
         }
     }
 
