@@ -65,18 +65,15 @@ final class ExportPreviewController: ObservableObject {
 }
 
 private enum ExportFormError: LocalizedError {
-    case blankOriginalCaption
-    case blankMissingCaption
+    case blankCaption
     case blankCategory
 
     var errorDescription: String? {
         switch self {
-        case .blankOriginalCaption:
-            return "Original caption is required."
-        case .blankMissingCaption:
-            return "Missing caption is required."
+        case .blankCaption:
+            return "Caption is required."
         case .blankCategory:
-            return "Category is required."
+            return "At least one category is required."
         }
     }
 }
@@ -87,8 +84,7 @@ struct ExportClipSheet: View {
     let onExport: (DatasetRowInput) async throws -> Void
 
     @StateObject private var previewController = ExportPreviewController()
-    @State private var originalCaptionText = ""
-    @State private var missingCaptionText = ""
+    @State private var captionText = ""
     @State private var categoryText = ""
     @State private var isExporting = false
     @State private var exportErrorMessage: String?
@@ -107,8 +103,7 @@ struct ExportClipSheet: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    originalCaptionSection
-                    missingCaptionSection
+                    captionSection
                     categorySection
                     generatedSection
 
@@ -168,35 +163,21 @@ struct ExportClipSheet: View {
         }
     }
 
-    private var originalCaptionSection: some View {
+    private var captionSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("Original Caption")
+            sectionTitle("Caption")
             textEditor(
-                text: $originalCaptionText,
+                text: $captionText,
                 minHeight: 110,
-                placeholder: "Positive caption and base negative caption"
-            )
-        }
-    }
-
-    private var missingCaptionSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("Missing Caption")
-            Text("Used as the prompt for the second synthetic negative.")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-            textEditor(
-                text: $missingCaptionText,
-                minHeight: 110,
-                placeholder: "Prompt for the missing-caption synthetic negative"
+                placeholder: "Saved as the clip caption and reused for the synthetic negative"
             )
         }
     }
 
     private var categorySection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("Category")
-            Text("Comma or newline separated. Each category generates two anchors.")
+            sectionTitle("Categories")
+            Text("Comma or newline separated. Each category generates one anchor.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
             textEditor(
@@ -213,11 +194,10 @@ struct ExportClipSheet: View {
             Text("This export automatically saves:")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
-            generatedLine("Positive caption", "original caption")
+            generatedLine("Caption", "caption")
             generatedLine("Categories", "[all provided categories]")
-            generatedLine("Negative 1", "synthetic, caption = original caption, prompt = original caption")
-            generatedLine("Negative 2", "synthetic, caption = original caption, prompt = missing caption")
-            generatedLine("Anchors", "for each category: one anchor with [category], one with [category] + allow random")
+            generatedLine("Negative", "synthetic, caption = caption, prompt = caption")
+            generatedLine("Anchors", "for each category: one anchor with [category]")
         }
     }
 
@@ -326,14 +306,9 @@ struct ExportClipSheet: View {
     }
 
     private func buildDatasetRowInput() throws -> DatasetRowInput {
-        let originalCaption = originalCaptionText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !originalCaption.isEmpty else {
-            throw ExportFormError.blankOriginalCaption
-        }
-
-        let missingCaption = missingCaptionText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !missingCaption.isEmpty else {
-            throw ExportFormError.blankMissingCaption
+        let caption = captionText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !caption.isEmpty else {
+            throw ExportFormError.blankCaption
         }
 
         let categories = parseUniqueItems(from: categoryText)
@@ -342,8 +317,7 @@ struct ExportClipSheet: View {
         }
 
         return DatasetRowInput(
-            originalCaption: originalCaption,
-            missingCaption: missingCaption,
+            caption: caption,
             categories: categories
         )
     }
