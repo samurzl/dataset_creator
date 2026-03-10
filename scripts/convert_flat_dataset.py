@@ -10,6 +10,27 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+try:
+    from PIL import Image, UnidentifiedImageError
+except ImportError:  # pragma: no cover - optional dependency for image validation
+    Image = None
+    UnidentifiedImageError = OSError
+
+
+IMAGE_SUFFIXES = {
+    ".avif",
+    ".bmp",
+    ".gif",
+    ".heic",
+    ".heif",
+    ".jpeg",
+    ".jpg",
+    ".png",
+    ".tif",
+    ".tiff",
+    ".webp",
+}
+
 
 @dataclass(frozen=True)
 class SourcePair:
@@ -113,6 +134,24 @@ def ensure_output_dir(output_dir: Path) -> None:
         raise ValueError(f"Refusing to write into non-empty directory '{positive_dir}'.")
 
 
+def validate_media_path(media_path: Path) -> str | None:
+    if media_path.suffix.lower() not in IMAGE_SUFFIXES:
+        return None
+
+    if Image is None:
+        return None
+
+    try:
+        with Image.open(media_path) as image:
+            image.verify()
+        with Image.open(media_path) as image:
+            image.load()
+    except (UnidentifiedImageError, OSError) as error:
+        return f"{type(error).__name__}: {error}"
+
+    return None
+
+
 def convert_dataset(input_dir: Path, output_dir: Path, category: str) -> tuple[int, Path]:
     trimmed_category = category.strip()
     if not trimmed_category:
@@ -130,11 +169,19 @@ def convert_dataset(input_dir: Path, output_dir: Path, category: str) -> tuple[i
     rows = []
 
     for index, pair in enumerate(collect_pairs(input_dir), start=1):
+        validation_error = validate_media_path(pair.media_path)
+        if validation_error is not None:
+            print(
+                f"warning: skipping unreadable media '{pair.media_path}': {validation_error}",
+                file=sys.stderr,
+            )
+            continue
+
         caption = pair.caption_path.read_text(encoding="utf-8").strip()
         if not caption:
             raise ValueError(f"Caption file '{pair.caption_path}' is empty.")
 
-        destination_name = f"{index}{pair.media_path.suffix.lower()}"
+        destination_name = f"{len(rows) + 1}{pair.media_path.suffix.lower()}"
         destination_path = positive_dir / destination_name
         shutil.copy2(pair.media_path, destination_path)
 

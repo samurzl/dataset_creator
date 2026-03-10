@@ -48,6 +48,8 @@ This writes:
 
 The converter expects exactly one `.txt` file and exactly one media file per stem, copies media into `positive/`, applies the same single category to every row, adds one synthetic negative with `caption == prompt == txt contents`, and adds one anchor with `required_categories = [category]`.
 
+If Pillow is installed, unreadable image files are skipped with a warning and are not copied into `positive/` or included in `dataset.json`.
+
 ## Supported video formats
 
 `mp4`, `mov`, `m4v`, `mkv`, `avi`, `mpg`, `mpeg`, `webm`
