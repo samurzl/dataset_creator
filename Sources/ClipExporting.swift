@@ -35,6 +35,7 @@ enum ClipExportError: LocalizedError {
     case readerFailed(underlying: Error?)
     case frameExtractionFailed(frameIndex: Int)
     case frameCountMismatch(expected: Int, actual: Int)
+    case timedOut(stage: String)
     case outputDirectoryMissing
     case outputFolderNotConfigured
 
@@ -66,6 +67,8 @@ enum ClipExportError: LocalizedError {
             return "Could not extract source frame \(frameIndex)."
         case let .frameCountMismatch(expected, actual):
             return "Exported frame count mismatch. Expected \(expected), got \(actual)."
+        case let .timedOut(stage):
+            return "Export timed out while \(stage)."
         case .outputDirectoryMissing:
             return "Dataset folder does not exist."
         case .outputFolderNotConfigured:
@@ -80,10 +83,29 @@ enum ClipExporter {
         case integerRate
     }
 
+    private static let pollingIntervalNanoseconds: UInt64 = 1_000_000
+
     private struct AudioExportContext {
         let reader: AVAssetReader
         let output: AVAssetReaderTrackOutput
         let writerInput: AVAssetWriterInput
+    }
+
+    private final class FinishWritingState: @unchecked Sendable {
+        private let lock = NSLock()
+        private var didFinish = false
+
+        func markFinished() {
+            lock.lock()
+            didFinish = true
+            lock.unlock()
+        }
+
+        var isFinished: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return didFinish
+        }
     }
 
     @MainActor
@@ -160,23 +182,81 @@ enum ClipExporter {
             throw ClipExportError.outputDirectoryMissing
         }
 
+        let preferredSafeEncodingProfile = RuntimeEnvironment.shouldUseSafeExportEncoding
+
         do {
-            try await writeVideoClip(request: request, to: outputURL, timingMode: .sourceRate)
-        } catch ClipExportError.frameCountMismatch {
-            // Some sources/encoders retime variable-rate timestamps; retry with strict integer CFR timeline.
-            try await writeVideoClip(request: request, to: outputURL, timingMode: .integerRate)
+            try await writeClipWithTimingFallback(
+                request: request,
+                to: outputURL,
+                useSafeEncodingProfile: preferredSafeEncodingProfile
+            )
+        } catch {
+            guard shouldRetryWithSafeEncoding(
+                after: error,
+                safeEncodingAlreadyEnabled: preferredSafeEncodingProfile
+            ) else {
+                throw error
+            }
+
+            try await writeClipWithTimingFallback(
+                request: request,
+                to: outputURL,
+                useSafeEncodingProfile: true
+            )
         }
 
         return outputURL
     }
 
+    private static func writeClipWithTimingFallback(
+        request: ClipExportRequest,
+        to outputURL: URL,
+        useSafeEncodingProfile: Bool
+    ) async throws {
+        do {
+            try await writeVideoClip(
+                request: request,
+                to: outputURL,
+                timingMode: .sourceRate,
+                useSafeEncodingProfile: useSafeEncodingProfile
+            )
+        } catch ClipExportError.frameCountMismatch {
+            // Some sources/encoders retime variable-rate timestamps; retry with strict integer CFR timeline.
+            try await writeVideoClip(
+                request: request,
+                to: outputURL,
+                timingMode: .integerRate,
+                useSafeEncodingProfile: useSafeEncodingProfile
+            )
+        }
+    }
+
+    private static func shouldRetryWithSafeEncoding(
+        after error: Error,
+        safeEncodingAlreadyEnabled: Bool
+    ) -> Bool {
+        guard !safeEncodingAlreadyEnabled,
+              let clipError = error as? ClipExportError else {
+            return false
+        }
+
+        switch clipError {
+        case .failedToCreateWriterInput, .writerAppendFailed, .writerFailed, .timedOut:
+            return true
+        default:
+            return false
+        }
+    }
+
     private static func writeVideoClip(
         request: ClipExportRequest,
         to outputURL: URL,
-        timingMode: ExportTimingMode
+        timingMode: ExportTimingMode,
+        useSafeEncodingProfile: Bool
     ) async throws {
         let fileManager = FileManager.default
         try? fileManager.removeItem(at: outputURL)
+        let exportIdleTimeoutSeconds = idleTimeoutSeconds(for: request)
 
         let sourceAsset = AVAsset(url: request.videoURL)
         let videoTracks = try await sourceAsset.loadTracks(withMediaType: .video)
@@ -219,7 +299,12 @@ enum ClipExporter {
             throw ClipExportError.readerFailed(underlying: reader.error)
         }
 
-        guard let firstSourceSampleBuffer = try await readNextDecodedSampleBuffer(output: readerOutput, reader: reader),
+        guard let firstSourceSampleBuffer = try await readNextDecodedSampleBuffer(
+            output: readerOutput,
+            reader: reader,
+            timeoutSeconds: exportIdleTimeoutSeconds,
+            stage: "reading source video frames"
+        ),
               let firstSourceBuffer = CMSampleBufferGetImageBuffer(firstSourceSampleBuffer) else {
             throw ClipExportError.frameExtractionFailed(frameIndex: request.inFrame)
         }
@@ -228,7 +313,6 @@ enum ClipExporter {
         let renderHeight = max(CVPixelBufferGetHeight(firstSourceBuffer), 1)
         let preferredTransform = try await sourceVideoTrack.load(.preferredTransform)
         let sourceEstimatedBitRate = Int((try await sourceVideoTrack.load(.estimatedDataRate)).rounded())
-        let useSafeEncodingProfile = RuntimeEnvironment.shouldUseSafeExportEncoding
 
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
         let integerFrameRate = max(Int(request.frameRate.rounded()), 1)
@@ -338,12 +422,22 @@ enum ClipExporter {
         var lastSourceSampleBuffer = firstSourceSampleBuffer
 
         for frameOffset in 0..<request.frameCount {
-            try await waitUntilReady(for: writerInput, writer: writer)
+            try await waitUntilReady(
+                for: writerInput,
+                writer: writer,
+                timeoutSeconds: exportIdleTimeoutSeconds,
+                stage: "waiting for the video encoder"
+            )
 
             let sourceSampleBuffer: CMSampleBuffer
             if frameOffset == 0 {
                 sourceSampleBuffer = firstSourceSampleBuffer
-            } else if let nextDecodedSampleBuffer = try await readNextDecodedSampleBuffer(output: readerOutput, reader: reader) {
+            } else if let nextDecodedSampleBuffer = try await readNextDecodedSampleBuffer(
+                output: readerOutput,
+                reader: reader,
+                timeoutSeconds: exportIdleTimeoutSeconds,
+                stage: "reading source video frames"
+            ) {
                 sourceSampleBuffer = nextDecodedSampleBuffer
                 lastSourceSampleBuffer = nextDecodedSampleBuffer
             } else {
@@ -387,15 +481,12 @@ enum ClipExporter {
                 from: audioExportContext.output,
                 reader: audioExportContext.reader,
                 to: audioExportContext.writerInput,
-                writer: writer
+                writer: writer,
+                timeoutSeconds: exportIdleTimeoutSeconds
             )
             audioExportContext.writerInput.markAsFinished()
         }
-        await withCheckedContinuation { continuation in
-            writer.finishWriting {
-                continuation.resume()
-            }
-        }
+        try await finishWriting(writer: writer, timeoutSeconds: exportIdleTimeoutSeconds)
 
         guard writer.status == .completed else {
             throw ClipExportError.writerFailed(underlying: writer.error)
@@ -410,8 +501,12 @@ enum ClipExporter {
 
     private static func readNextDecodedSampleBuffer(
         output: AVAssetReaderTrackOutput,
-        reader: AVAssetReader
+        reader: AVAssetReader,
+        timeoutSeconds: Double,
+        stage: String
     ) async throws -> CMSampleBuffer? {
+        let deadline = OperationDeadline(timeoutSeconds: timeoutSeconds)
+
         while true {
             if let sampleBuffer = output.copyNextSampleBuffer() {
                 if CMSampleBufferGetImageBuffer(sampleBuffer) != nil {
@@ -426,8 +521,12 @@ enum ClipExporter {
             case .failed:
                 throw ClipExportError.readerFailed(underlying: reader.error)
             case .reading, .unknown:
+                if deadline.hasExpired() {
+                    reader.cancelReading()
+                    throw ClipExportError.timedOut(stage: stage)
+                }
                 try Task.checkCancellation()
-                try await Task.sleep(nanoseconds: 1_000_000)
+                try await Task.sleep(nanoseconds: pollingIntervalNanoseconds)
             @unknown default:
                 return nil
             }
@@ -497,7 +596,14 @@ enum ClipExporter {
         return pixelBuffer
     }
 
-    private static func waitUntilReady(for input: AVAssetWriterInput, writer: AVAssetWriter) async throws {
+    private static func waitUntilReady(
+        for input: AVAssetWriterInput,
+        writer: AVAssetWriter,
+        timeoutSeconds: Double,
+        stage: String
+    ) async throws {
+        let deadline = OperationDeadline(timeoutSeconds: timeoutSeconds)
+
         while !input.isReadyForMoreMediaData {
             switch writer.status {
             case .failed, .cancelled:
@@ -505,8 +611,12 @@ enum ClipExporter {
             default:
                 break
             }
+            if deadline.hasExpired() {
+                writer.cancelWriting()
+                throw ClipExportError.timedOut(stage: stage)
+            }
             try Task.checkCancellation()
-            try await Task.sleep(nanoseconds: 1_000_000)
+            try await Task.sleep(nanoseconds: pollingIntervalNanoseconds)
         }
     }
 
@@ -589,17 +699,26 @@ enum ClipExporter {
         from output: AVAssetReaderTrackOutput,
         reader: AVAssetReader,
         to input: AVAssetWriterInput,
-        writer: AVAssetWriter
+        writer: AVAssetWriter,
+        timeoutSeconds: Double
     ) async throws {
+        var deadline = OperationDeadline(timeoutSeconds: timeoutSeconds)
+
         while true {
             if let sampleBuffer = output.copyNextSampleBuffer() {
-                try await waitUntilReady(for: input, writer: writer)
+                try await waitUntilReady(
+                    for: input,
+                    writer: writer,
+                    timeoutSeconds: timeoutSeconds,
+                    stage: "waiting for the audio encoder"
+                )
                 guard input.append(sampleBuffer) else {
                     if writer.status == .failed {
                         throw ClipExportError.writerFailed(underlying: writer.error)
                     }
                     throw ClipExportError.writerAppendFailed
                 }
+                deadline = OperationDeadline(timeoutSeconds: timeoutSeconds)
                 continue
             }
 
@@ -609,12 +728,52 @@ enum ClipExporter {
             case .failed:
                 throw ClipExportError.readerFailed(underlying: reader.error)
             case .reading, .unknown:
+                if deadline.hasExpired() {
+                    reader.cancelReading()
+                    writer.cancelWriting()
+                    throw ClipExportError.timedOut(stage: "reading source audio samples")
+                }
                 try Task.checkCancellation()
-                try await Task.sleep(nanoseconds: 1_000_000)
+                try await Task.sleep(nanoseconds: pollingIntervalNanoseconds)
             @unknown default:
                 return
             }
         }
+    }
+
+    private static func finishWriting(
+        writer: AVAssetWriter,
+        timeoutSeconds: Double
+    ) async throws {
+        let state = FinishWritingState()
+        let deadline = OperationDeadline(timeoutSeconds: timeoutSeconds)
+
+        writer.finishWriting {
+            state.markFinished()
+        }
+
+        while !state.isFinished {
+            switch writer.status {
+            case .completed:
+                return
+            case .failed, .cancelled:
+                throw ClipExportError.writerFailed(underlying: writer.error)
+            default:
+                break
+            }
+
+            if deadline.hasExpired() {
+                writer.cancelWriting()
+                throw ClipExportError.timedOut(stage: "finalizing the clip file")
+            }
+
+            try Task.checkCancellation()
+            try await Task.sleep(nanoseconds: pollingIntervalNanoseconds)
+        }
+    }
+
+    private static func idleTimeoutSeconds(for request: ClipExportRequest) -> Double {
+        min(max(request.durationSeconds * 6, 15), 120)
     }
 
     private static func countVideoFrames(in videoURL: URL) async throws -> Int {
