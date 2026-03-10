@@ -23,6 +23,31 @@ The selected dataset folder becomes the dataset root. The app writes:
 
 The generated dataset rows use the Advanced Structured NSYNC JSON format with fixed `caption`, `media_path`, and `nsync` keys.
 
+## Flat dataset conversion helper
+
+If you already have a flat dataset like:
+
+```text
+dataset/
+  1.mp4
+  1.txt
+  2.png
+  2.txt
+```
+
+you can convert it into this repo's dataset format with:
+
+```bash
+python3 scripts/convert_flat_dataset.py /path/to/input /path/to/output my-category
+```
+
+This writes:
+
+- `dataset.json`
+- `positive/<n>.<ext>`
+
+The converter expects exactly one `.txt` file and exactly one media file per stem, copies media into `positive/`, applies the same single category to every row, adds one synthetic negative with `caption == prompt == txt contents`, and adds one anchor with `required_categories = [category]`.
+
 ## Supported video formats
 
 `mp4`, `mov`, `m4v`, `mkv`, `avi`, `mpg`, `mpeg`, `webm`
