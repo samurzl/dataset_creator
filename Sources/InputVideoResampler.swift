@@ -1,6 +1,10 @@
 import AVFoundation
 import Foundation
 
+protocol InputVideoPreparing: Sendable {
+    func preparedURL(for sourceURL: URL) async throws -> URL
+}
+
 enum InputVideoResampleError: LocalizedError {
     case missingVideoTrack
     case failedToCreateExportSession
@@ -156,5 +160,11 @@ actor InputVideoResampler {
         default:
             throw InputVideoResampleError.unknownExportStatus
         }
+    }
+}
+
+extension InputVideoResampler: InputVideoPreparing {
+    func preparedURL(for sourceURL: URL) async throws -> URL {
+        try await resampledURL(for: sourceURL)
     }
 }

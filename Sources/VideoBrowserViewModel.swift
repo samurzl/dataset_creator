@@ -22,9 +22,9 @@ final class VideoBrowserViewModel: ObservableObject {
 
     let playerController = VideoPlayerController()
 
-    private let defaults = UserDefaults.standard
-    private let fileManager = FileManager.default
-    private let inputVideoResampler = InputVideoResampler(targetFrameRate: 16)
+    private let defaults: UserDefaults
+    private let fileManager: FileManager
+    private let inputVideoResampler: any InputVideoPreparing
     private let datasetAuthoringService = DatasetAuthoringService()
     private var cancellables: Set<AnyCancellable> = []
     private var activeLoadTask: Task<Void, Never>?
@@ -36,7 +36,14 @@ final class VideoBrowserViewModel: ObservableObject {
     private let supportedExtensions: Set<String> = ["mp4", "mov", "m4v", "mkv", "avi", "mpg", "mpeg", "webm"]
     private let preloadLookaheadCount = 2
 
-    init() {
+    init(
+        defaults: UserDefaults = .standard,
+        fileManager: FileManager = .default,
+        inputVideoResampler: any InputVideoPreparing = InputVideoResampler(targetFrameRate: 16)
+    ) {
+        self.defaults = defaults
+        self.fileManager = fileManager
+        self.inputVideoResampler = inputVideoResampler
         inputFolderPath = defaults.string(forKey: Self.inputFolderDefaultsKey) ?? ""
         outputFolderPath = defaults.string(forKey: Self.outputFolderDefaultsKey) ?? ""
 
@@ -190,7 +197,6 @@ final class VideoBrowserViewModel: ObservableObject {
             selectedVideoIndex = min(selectedVideoIndex, videoURLs.count - 1)
         }
 
-        schedulePreloadForAllVideos()
         loadSelectedVideo()
     }
 
@@ -220,7 +226,6 @@ final class VideoBrowserViewModel: ObservableObject {
         cancelVideoLoading()
         selectedVideoURL = nil
         playerController.clearVideo()
-        scheduleLookaheadPreload(after: selectedVideoIndex)
 
         let selectionToken = UUID()
         activeSelectionToken = selectionToken
@@ -229,11 +234,12 @@ final class VideoBrowserViewModel: ObservableObject {
             guard let self else { return }
 
             do {
-                let preparedVideoURL = try await self.inputVideoResampler.resampledURL(for: selectedSourceVideoURL)
+                let preparedVideoURL = try await self.inputVideoResampler.preparedURL(for: selectedSourceVideoURL)
                 guard !Task.isCancelled, self.activeSelectionToken == selectionToken else { return }
 
                 self.selectedVideoURL = preparedVideoURL
                 self.playerController.loadVideo(at: preparedVideoURL)
+                self.scheduleLookaheadPreload(after: self.selectedVideoIndex)
             } catch is CancellationError {
                 return
             } catch {
@@ -263,14 +269,6 @@ final class VideoBrowserViewModel: ObservableObject {
         }
     }
 
-    private func schedulePreloadForAllVideos() {
-        guard !videoURLs.isEmpty else { return }
-
-        for sourceURL in videoURLs {
-            schedulePreload(for: sourceURL)
-        }
-    }
-
     private func schedulePreload(for sourceURL: URL) {
         guard preloadingSourceURLs.insert(sourceURL).inserted else { return }
 
@@ -279,7 +277,7 @@ final class VideoBrowserViewModel: ObservableObject {
             defer {
                 self.preloadingSourceURLs.remove(sourceURL)
             }
-            _ = try? await self.inputVideoResampler.resampledURL(for: sourceURL)
+            _ = try? await self.inputVideoResampler.preparedURL(for: sourceURL)
         }
     }
 
