@@ -256,13 +256,23 @@ enum ClipExporter {
     ) async throws {
         let fileManager = FileManager.default
         try? fileManager.removeItem(at: outputURL)
-        let exportIdleTimeoutSeconds = idleTimeoutSeconds(for: request)
 
         let sourceAsset = AVAsset(url: request.videoURL)
         let videoTracks = try await sourceAsset.loadTracks(withMediaType: .video)
         guard let sourceVideoTrack = videoTracks.first else {
             throw ClipExportError.missingVideoTrack
         }
+        let sourceNaturalSize = try await sourceVideoTrack.load(.naturalSize)
+        let sourcePixelCount = max(
+            Int(abs(sourceNaturalSize.width * sourceNaturalSize.height).rounded()),
+            1
+        )
+        let sourceEstimatedBitRate = try await sourceVideoTrack.load(.estimatedDataRate)
+        let exportIdleTimeoutSeconds = idleTimeoutSeconds(
+            for: request,
+            sourcePixelCount: sourcePixelCount,
+            sourceEstimatedBitRate: Double(sourceEstimatedBitRate)
+        )
 
         let assetDuration = try await sourceAsset.load(.duration)
         let rawDurationSeconds = assetDuration.seconds
@@ -276,12 +286,16 @@ enum ClipExporter {
         guard availableDurationSeconds > 0 else {
             throw ClipExportError.invalidSourceRange
         }
+        let safeVideoDurationSeconds = min(request.durationSeconds, availableDurationSeconds)
+        guard safeVideoDurationSeconds > 0 else {
+            throw ClipExportError.invalidSourceRange
+        }
         let safeAudioDurationSeconds = min(request.durationSeconds, availableDurationSeconds)
 
         let reader = try AVAssetReader(asset: sourceAsset)
         reader.timeRange = CMTimeRange(
             start: CMTime(seconds: startSeconds, preferredTimescale: 60_000),
-            duration: CMTime(seconds: availableDurationSeconds, preferredTimescale: 60_000)
+            duration: CMTime(seconds: safeVideoDurationSeconds, preferredTimescale: 60_000)
         )
 
         let readerOutputSettings: [String: Any] = [
@@ -312,7 +326,7 @@ enum ClipExporter {
         let renderWidth = max(CVPixelBufferGetWidth(firstSourceBuffer), 1)
         let renderHeight = max(CVPixelBufferGetHeight(firstSourceBuffer), 1)
         let preferredTransform = try await sourceVideoTrack.load(.preferredTransform)
-        let sourceEstimatedBitRate = Int((try await sourceVideoTrack.load(.estimatedDataRate)).rounded())
+        let roundedSourceEstimatedBitRate = Int(sourceEstimatedBitRate.rounded())
 
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
         let integerFrameRate = max(Int(request.frameRate.rounded()), 1)
@@ -321,7 +335,7 @@ enum ClipExporter {
             // Virtualized environments often expose unstable hardware encode paths.
             // Keep settings conservative to favor stability over compression efficiency.
             let resolutionScaledBitRate = max(renderWidth * renderHeight * 8, 2_000_000)
-            let sourceScaledBitRate = max(sourceEstimatedBitRate, 0)
+            let sourceScaledBitRate = max(roundedSourceEstimatedBitRate, 0)
             let targetBitRate = min(max(resolutionScaledBitRate, sourceScaledBitRate), 24_000_000)
             compressionSettings = [
                 AVVideoAverageBitRateKey: targetBitRate,
@@ -333,7 +347,7 @@ enum ClipExporter {
             ]
         } else {
             let resolutionScaledBitRate = max(renderWidth * renderHeight * 14, 12_000_000)
-            let sourceScaledBitRate = max(sourceEstimatedBitRate * 2, 0)
+            let sourceScaledBitRate = max(roundedSourceEstimatedBitRate * 2, 0)
             let targetBitRate = min(max(resolutionScaledBitRate, sourceScaledBitRate), 240_000_000)
             compressionSettings = [
                 AVVideoAverageBitRateKey: targetBitRate,
@@ -356,7 +370,8 @@ enum ClipExporter {
 
         let writerInput = AVAssetWriterInput(mediaType: .video, outputSettings: outputSettings)
         writerInput.expectsMediaDataInRealTime = false
-        writerInput.performsMultiPassEncodingIfSupported = !useSafeEncodingProfile
+        // These exports are tiny clips, so predictable completion matters more than multipass gains.
+        writerInput.performsMultiPassEncodingIfSupported = false
         writerInput.mediaTimeScale = 60_000
         writerInput.transform = preferredTransform
 
@@ -772,8 +787,17 @@ enum ClipExporter {
         }
     }
 
-    private static func idleTimeoutSeconds(for request: ClipExportRequest) -> Double {
-        min(max(request.durationSeconds * 6, 15), 120)
+    static func idleTimeoutSeconds(
+        for request: ClipExportRequest,
+        sourcePixelCount: Int = 0,
+        sourceEstimatedBitRate: Double = 0
+    ) -> Double {
+        let baseSeconds = max(request.durationSeconds * 12, 45)
+        let megapixels = max(Double(sourcePixelCount), 0) / 1_000_000
+        let bitrateMegabitsPerSecond = max(sourceEstimatedBitRate, 0) / 1_000_000
+        let complexityAllowance = (megapixels * 5) + min(bitrateMegabitsPerSecond * 0.5, 30)
+
+        return min(baseSeconds + complexityAllowance, 300)
     }
 
     private static func countVideoFrames(in videoURL: URL) async throws -> Int {

@@ -1,101 +1,51 @@
-import AVFoundation
 import AVFAudio
+import AVFoundation
 import Foundation
 import XCTest
 @testable import VideoDatasetBrowser
 
-final class ClipExportingTests: XCTestCase {
-    func testIdleTimeoutHasGenerousFloorForShortClips() {
-        let request = ClipExportRequest(
-            videoURL: URL(fileURLWithPath: "/tmp/source.mp4"),
-            inFrame: 0,
-            frameCount: 5,
-            frameRate: 16,
-            aspectRatio: 1
-        )
+final class InputVideoResamplerTests: XCTestCase {
+    func testPreparedURLResamplesVideoToDefaultFrameRate() async throws {
+        let sourceURL = repositoryRootURL().appendingPathComponent("example_dataset/positive/1.mp4")
+        let resampler = InputVideoResampler()
 
-        let timeoutSeconds = ClipExporter.idleTimeoutSeconds(
-            for: request,
-            sourcePixelCount: 640 * 360,
-            sourceEstimatedBitRate: 2_000_000
-        )
+        let preparedURL = try await resampler.preparedURL(for: sourceURL)
 
-        XCTAssertGreaterThanOrEqual(timeoutSeconds, 45)
+        XCTAssertNotEqual(preparedURL, sourceURL)
+
+        let preparedAsset = AVAsset(url: preparedURL)
+        let videoTracks = try await preparedAsset.loadTracks(withMediaType: .video)
+        let videoTrack = try XCTUnwrap(videoTracks.first)
+        let nominalFrameRate = Double(try await videoTrack.load(.nominalFrameRate))
+
+        XCTAssertEqual(
+            nominalFrameRate,
+            Double(InputVideoResampler.defaultTargetFrameRate),
+            accuracy: 0.25
+        )
     }
 
-    func testIdleTimeoutIncreasesForMoreDemandingSources() {
-        let request = ClipExportRequest(
-            videoURL: URL(fileURLWithPath: "/tmp/source.mp4"),
-            inFrame: 0,
-            frameCount: 5,
-            frameRate: 16,
-            aspectRatio: 1
-        )
-
-        let lowComplexityTimeout = ClipExporter.idleTimeoutSeconds(
-            for: request,
-            sourcePixelCount: 640 * 360,
-            sourceEstimatedBitRate: 2_000_000
-        )
-        let highComplexityTimeout = ClipExporter.idleTimeoutSeconds(
-            for: request,
-            sourcePixelCount: 3_840 * 2_160,
-            sourceEstimatedBitRate: 80_000_000
-        )
-
-        XCTAssertGreaterThan(highComplexityTimeout, lowComplexityTimeout)
-    }
-
-    func testIdleTimeoutCapsForVeryLongOrComplexExports() {
-        let request = ClipExportRequest(
-            videoURL: URL(fileURLWithPath: "/tmp/source.mp4"),
-            inFrame: 0,
-            frameCount: 16 * 60,
-            frameRate: 16,
-            aspectRatio: 1
-        )
-
-        let timeoutSeconds = ClipExporter.idleTimeoutSeconds(
-            for: request,
-            sourcePixelCount: 7_680 * 4_320,
-            sourceEstimatedBitRate: 240_000_000
-        )
-
-        XCTAssertEqual(timeoutSeconds, 300)
-    }
-
-    func testExportClipRetainsAudioWhenSourceContainsAudio() async throws {
+    func testPreparedURLPreservesAudioWhileResamplingFrameRate() async throws {
         let rootURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: rootURL) }
 
         let sourceURL = try await makeVideoWithAudio(in: rootURL)
-        let sourceAsset = AVAsset(url: sourceURL)
-        let videoTracks = try await sourceAsset.loadTracks(withMediaType: .video)
-        let sourceVideoTrack = try XCTUnwrap(videoTracks.first)
-        let frameRate = Double(try await sourceVideoTrack.load(.nominalFrameRate))
-        XCTAssertGreaterThan(frameRate, 0)
+        let resampler = InputVideoResampler()
 
-        let outputURL = rootURL.appendingPathComponent("clip.mp4")
-        let request = ClipExportRequest(
-            videoURL: sourceURL,
-            inFrame: 0,
-            frameCount: 5,
-            frameRate: frameRate,
-            aspectRatio: 1
+        let preparedURL = try await resampler.preparedURL(for: sourceURL)
+        let preparedAsset = AVAsset(url: preparedURL)
+        let videoTracks = try await preparedAsset.loadTracks(withMediaType: .video)
+        let videoTrack = try XCTUnwrap(videoTracks.first)
+        let nominalFrameRate = Double(try await videoTrack.load(.nominalFrameRate))
+        let audioTracks = try await preparedAsset.loadTracks(withMediaType: .audio)
+
+        XCTAssertEqual(
+            nominalFrameRate,
+            Double(InputVideoResampler.defaultTargetFrameRate),
+            accuracy: 0.25
         )
-
-        _ = try await ClipExporter.exportClip(request: request, to: outputURL)
-
-        let exportedAsset = AVAsset(url: outputURL)
-        let audioTracks = try await exportedAsset.loadTracks(withMediaType: .audio)
         XCTAssertEqual(audioTracks.count, 1)
-        XCTAssertTrue(assetContainsSamples(asset: exportedAsset, track: audioTracks[0]))
-    }
-
-    private func makeTemporaryDirectory() throws -> URL {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
+        XCTAssertTrue(assetContainsSamples(asset: preparedAsset, track: audioTracks[0]))
     }
 
     private func repositoryRootURL() -> URL {
@@ -103,6 +53,12 @@ final class ClipExportingTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
+    }
+
+    private func makeTemporaryDirectory() throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
     }
 
     private func makeVideoWithAudio(in rootURL: URL) async throws -> URL {

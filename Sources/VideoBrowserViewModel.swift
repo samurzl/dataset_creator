@@ -39,7 +39,7 @@ final class VideoBrowserViewModel: ObservableObject {
     init(
         defaults: UserDefaults = .standard,
         fileManager: FileManager = .default,
-        inputVideoResampler: any InputVideoPreparing = InputVideoResampler(targetFrameRate: 16)
+        inputVideoResampler: any InputVideoPreparing = InputVideoResampler()
     ) {
         self.defaults = defaults
         self.fileManager = fileManager

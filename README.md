@@ -7,6 +7,7 @@ Native macOS GUI app to browse videos from an input folder, trim clips, and auth
 - Set input and dataset folders from the UI.
 - Folder settings persist across app restarts.
 - Auto-load all videos from the input folder.
+- Input videos are normalized to 16 fps before preview and export.
 - Large video preview that fills most of the window.
 - Playback timeline scrubber below the preview.
 - Timeline slider and controls to move through videos in the folder.
