@@ -1,19 +1,21 @@
 # VideoDatasetBrowser (macOS)
 
-Native macOS GUI app to browse videos from an input folder, trim clips, and author Advanced Structured NSYNC datasets.
+Native macOS GUI app to browse videos and images from an input folder, trim or crop them, and author Advanced Structured NSYNC datasets.
 
 ## Features
 
 - Set input and dataset folders from the UI.
 - Folder settings persist across app restarts.
-- Auto-load all videos from the input folder.
+- Auto-load supported videos and images from the input folder.
 - Input videos are normalized to 16 fps before preview and export.
-- Large video preview that fills most of the window.
-- Playback timeline scrubber below the preview.
-- Timeline slider and controls to move through videos in the folder.
-- Export selected clips into a dataset root under `positive/<n>.mp4`, preserving source audio when present.
+- Large media preview that fills most of the window.
+- Playback timeline scrubber for videos and drag-to-crop selection for images.
+- Navigation controls to move through media in the folder.
+- Export selected videos into `positive/<n>.mp4`, preserving source audio when present.
+- Export cropped images into `positive/<n>.png`.
 - Append validated Advanced NSYNC rows to `dataset.json`.
 - Author per-row caption and categories from the export sheet, with one synthetic negative and one anchor per category generated automatically.
+- Prefill the export caption and categories with the last successfully exported values.
 
 ## Dataset output
 
@@ -21,6 +23,7 @@ The selected dataset folder becomes the dataset root. The app writes:
 
 - `dataset.json`
 - `positive/<n>.mp4`
+- `positive/<n>.png`
 
 The generated dataset rows use the Advanced Structured NSYNC JSON format with fixed `caption`, `media_path`, and `nsync` keys.
 
@@ -51,9 +54,11 @@ The converter expects exactly one `.txt` file and exactly one media file per ste
 
 If Pillow is installed, unreadable image files are skipped with a warning and are not copied into `positive/` or included in `dataset.json`.
 
-## Supported video formats
+## Supported media formats
 
-`mp4`, `mov`, `m4v`, `mkv`, `avi`, `mpg`, `mpeg`, `webm`
+Videos: `mp4`, `mov`, `m4v`, `mkv`, `avi`, `mpg`, `mpeg`, `webm`
+
+Images: `png`, `jpg`, `jpeg`, `webp`, `heic`, `heif`, `bmp`, `tif`, `tiff`, `gif`
 
 ## Run in development
 

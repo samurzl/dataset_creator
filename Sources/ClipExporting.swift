@@ -1,35 +1,154 @@
 import AudioToolbox
 import AVFoundation
+import AppKit
 import CoreGraphics
 import CoreVideo
 import Foundation
 
 struct ClipExportRequest: Identifiable {
+    struct VideoSelection {
+        let videoURL: URL
+        let inFrame: Int
+        let frameCount: Int
+        let frameRate: Double
+    }
+
+    struct ImageSelection {
+        let imageURL: URL
+        let cropRect: CGRect
+        let imageSize: CGSize
+    }
+
+    enum Source {
+        case video(VideoSelection)
+        case image(ImageSelection)
+    }
+
     let id = UUID()
-    let videoURL: URL
-    let inFrame: Int
-    let frameCount: Int
-    let frameRate: Double
+    let source: Source
     let aspectRatio: CGFloat
 
+    init(
+        videoURL: URL,
+        inFrame: Int,
+        frameCount: Int,
+        frameRate: Double,
+        aspectRatio: CGFloat
+    ) {
+        source = .video(
+            VideoSelection(
+                videoURL: videoURL,
+                inFrame: inFrame,
+                frameCount: frameCount,
+                frameRate: frameRate
+            )
+        )
+        self.aspectRatio = aspectRatio
+    }
+
+    init(
+        imageURL: URL,
+        cropRect: CGRect,
+        imageSize: CGSize
+    ) {
+        let resolvedCropRect = cropRect.standardized
+        source = .image(
+            ImageSelection(
+                imageURL: imageURL,
+                cropRect: resolvedCropRect,
+                imageSize: imageSize
+            )
+        )
+
+        let width = max(resolvedCropRect.width, 1)
+        let height = max(resolvedCropRect.height, 1)
+        aspectRatio = width / height
+    }
+
+    var isVideo: Bool {
+        if case .video = source {
+            return true
+        }
+        return false
+    }
+
+    var isImage: Bool {
+        if case .image = source {
+            return true
+        }
+        return false
+    }
+
+    var mediaFileExtension: String {
+        switch source {
+        case .video:
+            return "mp4"
+        case .image:
+            return "png"
+        }
+    }
+
+    var videoSelection: VideoSelection? {
+        guard case let .video(selection) = source else { return nil }
+        return selection
+    }
+
+    var imageSelection: ImageSelection? {
+        guard case let .image(selection) = source else { return nil }
+        return selection
+    }
+
     var startSeconds: Double {
-        Double(inFrame) / frameRate
+        guard let videoSelection else { return 0 }
+        return Double(videoSelection.inFrame) / videoSelection.frameRate
     }
 
     var durationSeconds: Double {
-        Double(frameCount) / frameRate
+        guard let videoSelection else { return 0 }
+        return Double(videoSelection.frameCount) / videoSelection.frameRate
+    }
+
+    var videoURL: URL {
+        guard let videoSelection else {
+            preconditionFailure("Attempted to read a video URL from an image export request.")
+        }
+        return videoSelection.videoURL
+    }
+
+    var inFrame: Int {
+        guard let videoSelection else {
+            preconditionFailure("Attempted to read a video frame range from an image export request.")
+        }
+        return videoSelection.inFrame
+    }
+
+    var frameCount: Int {
+        guard let videoSelection else {
+            preconditionFailure("Attempted to read a video frame count from an image export request.")
+        }
+        return videoSelection.frameCount
+    }
+
+    var frameRate: Double {
+        guard let videoSelection else {
+            preconditionFailure("Attempted to read a video frame rate from an image export request.")
+        }
+        return videoSelection.frameRate
     }
 }
 
 enum ClipExportError: LocalizedError {
-    case noVideoSelected
+    case noMediaSelected
     case invalidFrameRate
     case invalidFrameCount
+    case invalidImage
+    case invalidImageCrop
     case missingVideoTrack
     case invalidSourceRange
     case failedToCreateCompositionTrack
     case failedToCreateWriterInput
     case failedToCreatePixelBuffer
+    case failedToWriteImage
     case writerAppendFailed
     case writerFailed(underlying: Error?)
     case readerFailed(underlying: Error?)
@@ -41,12 +160,16 @@ enum ClipExportError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .noVideoSelected:
-            return "No video selected."
+        case .noMediaSelected:
+            return "No media selected."
         case .invalidFrameRate:
             return "The video frame rate is invalid."
         case .invalidFrameCount:
             return "The selected clip length must follow 5, 9, 13, ... frames."
+        case .invalidImage:
+            return "The selected image could not be loaded."
+        case .invalidImageCrop:
+            return "The selected image crop is invalid."
         case .missingVideoTrack:
             return "No video track found in the selected source."
         case .invalidSourceRange:
@@ -57,6 +180,8 @@ enum ClipExportError: LocalizedError {
             return "Failed to configure the clip writer."
         case .failedToCreatePixelBuffer:
             return "Failed to allocate a frame buffer for export."
+        case .failedToWriteImage:
+            return "Failed to write the cropped image."
         case .writerAppendFailed:
             return "Failed while writing the output clip."
         case let .writerFailed(underlying):
@@ -81,6 +206,11 @@ enum ClipExporter {
     private enum ExportTimingMode {
         case sourceRate
         case integerRate
+    }
+
+    private struct RasterizedImage {
+        let cgImage: CGImage
+        let pixelSize: CGSize
     }
 
     private static let pollingIntervalNanoseconds: UInt64 = 1_000_000
@@ -110,6 +240,10 @@ enum ClipExporter {
 
     @MainActor
     static func createPreviewItem(for request: ClipExportRequest) async throws -> AVPlayerItem {
+        guard request.isVideo else {
+            throw ClipExportError.invalidSourceRange
+        }
+
         guard request.frameRate > 0 else {
             throw ClipExportError.invalidFrameRate
         }
@@ -164,7 +298,32 @@ enum ClipExporter {
         return AVPlayerItem(asset: composition)
     }
 
+    @MainActor
+    static func createPreviewImage(for request: ClipExportRequest) throws -> NSImage {
+        guard let imageSelection = request.imageSelection else {
+            throw ClipExportError.invalidImage
+        }
+
+        let croppedImage = try makeCroppedImage(from: imageSelection)
+        return NSImage(
+            cgImage: croppedImage,
+            size: NSSize(width: croppedImage.width, height: croppedImage.height)
+        )
+    }
+
     static func exportClip(
+        request: ClipExportRequest,
+        to outputURL: URL
+    ) async throws -> URL {
+        switch request.source {
+        case .video:
+            return try await exportVideoClip(request: request, to: outputURL)
+        case let .image(imageSelection):
+            return try await exportImage(selection: imageSelection, to: outputURL)
+        }
+    }
+
+    private static func exportVideoClip(
         request: ClipExportRequest,
         to outputURL: URL
     ) async throws -> URL {
@@ -206,6 +365,123 @@ enum ClipExporter {
         }
 
         return outputURL
+    }
+
+    private static func exportImage(
+        selection: ClipExportRequest.ImageSelection,
+        to outputURL: URL
+    ) async throws -> URL {
+        let fileManager = FileManager.default
+        let outputDirectory = outputURL.deletingLastPathComponent()
+        guard fileManager.fileExists(atPath: outputDirectory.path) else {
+            throw ClipExportError.outputDirectoryMissing
+        }
+
+        try? fileManager.removeItem(at: outputURL)
+
+        let pngData = try await MainActor.run { () throws -> Data in
+            let croppedImage = try makeCroppedImage(from: selection)
+            let bitmap = NSBitmapImageRep(cgImage: croppedImage)
+            guard let pngData = bitmap.representation(using: .png, properties: [:]) else {
+                throw ClipExportError.failedToWriteImage
+            }
+            return pngData
+        }
+
+        do {
+            try pngData.write(to: outputURL, options: .atomic)
+        } catch {
+            throw ClipExportError.failedToWriteImage
+        }
+
+        return outputURL
+    }
+
+    @MainActor
+    private static func makeCroppedImage(
+        from selection: ClipExportRequest.ImageSelection
+    ) throws -> CGImage {
+        let rasterizedImage = try rasterizedImage(from: selection.imageURL)
+        let cropRect = resolveCropRect(selection.cropRect, within: rasterizedImage.pixelSize)
+
+        guard let croppedImage = rasterizedImage.cgImage.cropping(to: cropRect) else {
+            throw ClipExportError.invalidImageCrop
+        }
+
+        return croppedImage
+    }
+
+    @MainActor
+    private static func rasterizedImage(from url: URL) throws -> RasterizedImage {
+        guard let image = NSImage(contentsOf: url) else {
+            throw ClipExportError.invalidImage
+        }
+
+        let pixelSize = image.pixelSize
+        guard pixelSize.width > 0, pixelSize.height > 0 else {
+            throw ClipExportError.invalidImage
+        }
+
+        let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(pixelSize.width),
+            pixelsHigh: Int(pixelSize.height),
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        )
+
+        guard let bitmap else {
+            throw ClipExportError.invalidImage
+        }
+
+        bitmap.size = NSSize(width: pixelSize.width, height: pixelSize.height)
+
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+        image.draw(
+            in: NSRect(origin: .zero, size: bitmap.size),
+            from: NSRect(origin: .zero, size: image.size),
+            operation: .copy,
+            fraction: 1
+        )
+        NSGraphicsContext.restoreGraphicsState()
+
+        guard let cgImage = bitmap.cgImage else {
+            throw ClipExportError.invalidImage
+        }
+
+        return RasterizedImage(
+            cgImage: cgImage,
+            pixelSize: CGSize(width: cgImage.width, height: cgImage.height)
+        )
+    }
+
+    private static func resolveCropRect(_ cropRect: CGRect, within imageSize: CGSize) -> CGRect {
+        let fullRect = CGRect(origin: .zero, size: imageSize)
+        let requestedRect = cropRect.standardized.intersection(fullRect)
+
+        let sourceRect = if requestedRect.width > 0, requestedRect.height > 0 {
+            requestedRect
+        } else {
+            fullRect
+        }
+
+        let minX = min(max(Int(sourceRect.minX.rounded(.down)), 0), max(Int(imageSize.width) - 1, 0))
+        let minY = min(max(Int(sourceRect.minY.rounded(.down)), 0), max(Int(imageSize.height) - 1, 0))
+        let maxX = max(min(Int(sourceRect.maxX.rounded(.up)), Int(imageSize.width)), minX + 1)
+        let maxY = max(min(Int(sourceRect.maxY.rounded(.up)), Int(imageSize.height)), minY + 1)
+
+        return CGRect(
+            x: minX,
+            y: minY,
+            width: maxX - minX,
+            height: maxY - minY
+        )
     }
 
     private static func writeClipWithTimingFallback(

@@ -1,5 +1,7 @@
+import AppKit
 import AVFoundation
 import AVFAudio
+import CoreGraphics
 import Foundation
 import XCTest
 @testable import VideoDatasetBrowser
@@ -90,6 +92,33 @@ final class ClipExportingTests: XCTestCase {
         let audioTracks = try await exportedAsset.loadTracks(withMediaType: .audio)
         XCTAssertEqual(audioTracks.count, 1)
         XCTAssertTrue(assetContainsSamples(asset: exportedAsset, track: audioTracks[0]))
+    }
+
+    func testExportImageWritesPNGForSelectedCrop() async throws {
+        let rootURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let sourceURL = rootURL.appendingPathComponent("source.png")
+        try writeQuadrantImage(to: sourceURL)
+
+        let outputURL = rootURL.appendingPathComponent("crop.png")
+        let request = ClipExportRequest(
+            imageURL: sourceURL,
+            cropRect: CGRect(x: 0, y: 0, width: 2, height: 2),
+            imageSize: CGSize(width: 4, height: 4)
+        )
+
+        _ = try await ClipExporter.exportClip(request: request, to: outputURL)
+
+        XCTAssertEqual(outputURL.pathExtension.lowercased(), "png")
+
+        let exportedImage = try XCTUnwrap(NSImage(contentsOf: outputURL))
+        XCTAssertEqual(exportedImage.pixelSize.width, 2)
+        XCTAssertEqual(exportedImage.pixelSize.height, 2)
+
+        let cgImage = try XCTUnwrap(exportedImage.cgImage(forProposedRect: nil, context: nil, hints: nil))
+        let pixelData = try XCTUnwrap(cgImage.dataProvider?.data) as Data
+        XCTAssertEqual(Array(pixelData.prefix(4)), [255, 0, 0, 255])
     }
 
     private func makeTemporaryDirectory() throws -> URL {
@@ -183,6 +212,60 @@ final class ClipExportingTests: XCTestCase {
             throw error
         }
         XCTAssertEqual(exporter.status, .completed)
+    }
+
+    private func writeQuadrantImage(to outputURL: URL) throws {
+        let width = 4
+        let height = 4
+        let bytesPerRow = width * 4
+        var data = [UInt8](repeating: 0, count: width * height * 4)
+
+        func setPixel(x: Int, y: Int, red: UInt8, green: UInt8, blue: UInt8) {
+            let index = (y * width + x) * 4
+            data[index] = red
+            data[index + 1] = green
+            data[index + 2] = blue
+            data[index + 3] = 255
+        }
+
+        for y in 0..<height {
+            for x in 0..<width {
+                if x < 2 && y < 2 {
+                    setPixel(x: x, y: y, red: 255, green: 0, blue: 0)
+                } else if x >= 2 && y < 2 {
+                    setPixel(x: x, y: y, red: 0, green: 255, blue: 0)
+                } else if x < 2 && y >= 2 {
+                    setPixel(x: x, y: y, red: 0, green: 0, blue: 255)
+                } else {
+                    setPixel(x: x, y: y, red: 255, green: 255, blue: 0)
+                }
+            }
+        }
+
+        let provider = CGDataProvider(data: NSData(bytes: &data, length: data.count))
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+
+        guard let provider,
+              let cgImage = CGImage(
+                  width: width,
+                  height: height,
+                  bitsPerComponent: 8,
+                  bitsPerPixel: 32,
+                  bytesPerRow: bytesPerRow,
+                  space: colorSpace,
+                  bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue),
+                  provider: provider,
+                  decode: nil,
+                  shouldInterpolate: false,
+                  intent: .defaultIntent
+              ) else {
+            XCTFail("Failed to allocate test image data.")
+            return
+        }
+
+        let bitmap = NSBitmapImageRep(cgImage: cgImage)
+        let pngData = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        try pngData.write(to: outputURL)
     }
 
     private func assetContainsSamples(asset: AVAsset, track: AVAssetTrack) -> Bool {

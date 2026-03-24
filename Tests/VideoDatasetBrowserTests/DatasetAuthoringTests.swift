@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import XCTest
 @testable import VideoDatasetBrowser
@@ -192,6 +193,31 @@ final class DatasetAuthoringTests: XCTestCase {
         XCTAssertEqual(rawArray.count, 2)
     }
 
+    func testPrepareAppendUsesNextMixedMediaIndexAndRequestedExtension() throws {
+        let rootURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        try FileManager.default.createDirectory(
+            at: rootURL.appendingPathComponent("positive", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+
+        let existingDataset: [Any] = [
+            rawRow(caption: "existing", mediaPath: "positive/2.mp4")
+        ]
+        try writeJSONObject(existingDataset, to: rootURL.appendingPathComponent("dataset.json"))
+        try Data("image".utf8).write(to: rootURL.appendingPathComponent("positive/3.png"))
+
+        let store = DatasetStore(datasetRootURL: rootURL)
+        let preparedAppend = try store.prepareAppend(
+            input: sampleInput(caption: "new row"),
+            mediaFileExtension: "png"
+        )
+
+        XCTAssertEqual(preparedAppend.rows.last?.mediaPath, "positive/4.png")
+        XCTAssertEqual(preparedAppend.outputMediaURL.lastPathComponent, "4.png")
+    }
+
     func testFirstAndSecondExportsCreateNumberedPositiveClipsAndAppendDataset() async throws {
         let rootURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: rootURL) }
@@ -218,6 +244,25 @@ final class DatasetAuthoringTests: XCTestCase {
         let rows = try DatasetStore(datasetRootURL: rootURL).loadRows()
         XCTAssertEqual(rows.map(\.mediaPath), ["positive/1.mp4", "positive/2.mp4"])
         XCTAssertEqual(rows.map(\.caption), ["first row", "second row"])
+    }
+
+    func testImageExportUsesPNGMediaPath() async throws {
+        let rootURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let service = makeAuthoringService()
+        let outputURL = try await service.exportClip(
+            request: dummyImageRequest(),
+            input: sampleInput(caption: "image row"),
+            datasetRootURL: rootURL
+        )
+
+        XCTAssertEqual(outputURL.lastPathComponent, "1.png")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: rootURL.appendingPathComponent("positive/1.png").path))
+
+        let rows = try DatasetStore(datasetRootURL: rootURL).loadRows()
+        XCTAssertEqual(rows.map(\.mediaPath), ["positive/1.png"])
+        XCTAssertEqual(rows.map(\.caption), ["image row"])
     }
 
     func testValidationFailureDoesNotMutateDatasetFile() async throws {
@@ -303,6 +348,14 @@ final class DatasetAuthoringTests: XCTestCase {
             frameCount: 5,
             frameRate: 16,
             aspectRatio: 1
+        )
+    }
+
+    private func dummyImageRequest() -> ClipExportRequest {
+        ClipExportRequest(
+            imageURL: URL(fileURLWithPath: "/tmp/source.png"),
+            cropRect: CGRect(x: 0, y: 0, width: 64, height: 64),
+            imageSize: CGSize(width: 64, height: 64)
         )
     }
 

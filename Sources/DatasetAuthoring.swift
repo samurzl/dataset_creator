@@ -249,7 +249,7 @@ enum JSONValue: Codable, Equatable {
 
 struct PreparedDatasetAppend {
     let rows: [DatasetRow]
-    let outputVideoURL: URL
+    let outputMediaURL: URL
 }
 
 enum DatasetStoreError: LocalizedError, Equatable {
@@ -321,6 +321,27 @@ struct DatasetStore {
     let datasetRootURL: URL
     let fileManager: FileManager
 
+    private let supportedPositiveMediaExtensions: Set<String> = [
+        "mp4",
+        "mov",
+        "m4v",
+        "mkv",
+        "avi",
+        "mpg",
+        "mpeg",
+        "webm",
+        "png",
+        "jpg",
+        "jpeg",
+        "webp",
+        "heic",
+        "heif",
+        "bmp",
+        "tif",
+        "tiff",
+        "gif"
+    ]
+
     init(datasetRootURL: URL, fileManager: FileManager = .default) {
         self.datasetRootURL = datasetRootURL
         self.fileManager = fileManager
@@ -334,11 +355,17 @@ struct DatasetStore {
         datasetRootURL.appendingPathComponent("positive", isDirectory: true)
     }
 
-    func prepareAppend(input: DatasetRowInput) throws -> PreparedDatasetAppend {
+    func prepareAppend(
+        input: DatasetRowInput,
+        mediaFileExtension: String = "mp4"
+    ) throws -> PreparedDatasetAppend {
         try validateSupportedDatasetFiles()
 
         let existingRows = try loadRows()
-        let nextMediaPath = try nextPositiveMediaPath(existingRows: existingRows)
+        let nextMediaPath = try nextPositiveMediaPath(
+            existingRows: existingRows,
+            mediaFileExtension: mediaFileExtension
+        )
         let row = try normalizedRow(
             rowIndex: existingRows.count,
             row: DatasetRow(
@@ -350,8 +377,8 @@ struct DatasetStore {
         )
 
         let finalRows = try validatedRows(existingRows + [row])
-        let outputVideoURL = datasetRootURL.appendingPathComponent(nextMediaPath)
-        return PreparedDatasetAppend(rows: finalRows, outputVideoURL: outputVideoURL)
+        let outputMediaURL = datasetRootURL.appendingPathComponent(nextMediaPath)
+        return PreparedDatasetAppend(rows: finalRows, outputMediaURL: outputMediaURL)
     }
 
     func commit(_ preparedAppend: PreparedDatasetAppend) throws {
@@ -663,8 +690,16 @@ struct DatasetStore {
         return normalized
     }
 
-    private func nextPositiveMediaPath(existingRows: [DatasetRow]) throws -> String {
+    private func nextPositiveMediaPath(
+        existingRows: [DatasetRow],
+        mediaFileExtension: String
+    ) throws -> String {
         var maxIndex = 0
+        let normalizedExtension = mediaFileExtension
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            .lowercased()
+        let resolvedExtension = normalizedExtension.isEmpty ? "mp4" : normalizedExtension
 
         if fileManager.fileExists(atPath: positiveDirectoryURL.path) {
             let urls = try fileManager.contentsOfDirectory(
@@ -673,7 +708,7 @@ struct DatasetStore {
                 options: [.skipsHiddenFiles]
             )
 
-            for url in urls where url.pathExtension.lowercased() == "mp4" {
+            for url in urls where supportedPositiveMediaExtensions.contains(url.pathExtension.lowercased()) {
                 if let index = Int(url.deletingPathExtension().lastPathComponent) {
                     maxIndex = max(maxIndex, index)
                 }
@@ -688,12 +723,12 @@ struct DatasetStore {
             }
             let fileName = String(components[1])
             let baseName = (fileName as NSString).deletingPathExtension
-            if (fileName as NSString).pathExtension.lowercased() == "mp4", let index = Int(baseName) {
+            if let index = Int(baseName) {
                 maxIndex = max(maxIndex, index)
             }
         }
 
-        return "positive/\(maxIndex + 1).mp4"
+        return "positive/\(maxIndex + 1).\(resolvedExtension)"
     }
 
     private func collapsedSamplePath(for mediaPath: String) -> String {
@@ -803,7 +838,10 @@ struct DatasetAuthoringService {
         datasetRootURL: URL
     ) async throws -> URL {
         let store = DatasetStore(datasetRootURL: datasetRootURL, fileManager: fileManager)
-        let preparedAppend = try store.prepareAppend(input: input)
+        let preparedAppend = try store.prepareAppend(
+            input: input,
+            mediaFileExtension: request.mediaFileExtension
+        )
 
         try fileManager.createDirectory(
             at: store.positiveDirectoryURL,
@@ -811,12 +849,12 @@ struct DatasetAuthoringService {
         )
 
         do {
-            let outputURL = try await clipExportOperation(request, preparedAppend.outputVideoURL)
+            let outputURL = try await clipExportOperation(request, preparedAppend.outputMediaURL)
             do {
                 try store.commit(preparedAppend)
                 return outputURL
             } catch {
-                try? fileManager.removeItem(at: preparedAppend.outputVideoURL)
+                try? fileManager.removeItem(at: preparedAppend.outputMediaURL)
                 throw error
             }
         } catch {

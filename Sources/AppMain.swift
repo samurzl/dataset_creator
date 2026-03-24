@@ -19,12 +19,16 @@ final class ExportWindowCoordinator: NSObject, ObservableObject, NSWindowDelegat
 
     func present(
         request: ClipExportRequest,
+        initialCaption: String,
+        initialCategoryText: String,
         onExport: @escaping (DatasetRowInput) async throws -> Void
     ) {
         close()
 
         let rootView = ExportClipSheet(
             request: request,
+            initialCaptionText: initialCaption,
+            initialCategoryText: initialCategoryText,
             onCancel: { [weak self] in
                 self?.close()
             },
@@ -92,8 +96,8 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 12) {
             settingsPanel
 
-            if viewModel.hasVideos {
-                videoBrowserView
+            if viewModel.hasMedia {
+                mediaBrowserView
             } else {
                 emptyStateView
             }
@@ -108,35 +112,38 @@ struct ContentView: View {
         }
     }
 
-    private var videoBrowserView: some View {
+    private var mediaBrowserView: some View {
         VStack(alignment: .leading, spacing: 12) {
-            PlayerPreview(player: viewModel.playerController.player)
-                .aspectRatio(viewModel.playerController.videoAspectRatio, contentMode: .fit)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                .frame(minHeight: 120)
-                .background(Color.secondary.opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .layoutPriority(1)
+            mediaPreview
 
-            TimelineThumbnailStrip(
-                videoURL: viewModel.selectedVideoURL,
-                playerController: viewModel.playerController
-            )
+            if viewModel.isShowingVideo {
+                TimelineThumbnailStrip(
+                    videoURL: viewModel.selectedMediaURL,
+                    playerController: viewModel.playerController
+                )
+            }
 
             selectionInfoRow
 
             HStack(spacing: 10) {
-                Button(
-                    viewModel.playerController.isLoopPlaying ? "Stop" : "Play Loop",
-                    action: viewModel.playerController.toggleLoopPlayback
-                )
-                .disabled(viewModel.playerController.totalFrames <= 1)
+                if viewModel.isShowingVideo {
+                    Button(
+                        viewModel.playerController.isLoopPlaying ? "Stop" : "Play Loop",
+                        action: viewModel.playerController.toggleLoopPlayback
+                    )
+                    .disabled(viewModel.playerController.totalFrames <= 1)
+                }
 
-                Button("Previous", action: viewModel.selectPreviousVideo)
-                    .disabled(!viewModel.hasPreviousVideo)
+                if viewModel.isShowingImage {
+                    Button("Reset Crop", action: viewModel.imageCropController.resetCrop)
+                        .disabled(!viewModel.imageCropController.hasCustomCrop)
+                }
 
-                Button("Next", action: viewModel.selectNextVideo)
-                    .disabled(!viewModel.hasNextVideo)
+                Button("Previous", action: viewModel.selectPreviousMedia)
+                    .disabled(!viewModel.hasPreviousMedia)
+
+                Button("Next", action: viewModel.selectNextMedia)
+                    .disabled(!viewModel.hasNextMedia)
 
                 Button("Add to Dataset…", action: beginExport)
                     .disabled(!canOpenExportSheet)
@@ -145,11 +152,38 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
+    private var mediaPreview: some View {
+        Group {
+            if viewModel.isShowingImage {
+                ImageCropEditor(controller: viewModel.imageCropController)
+                    .aspectRatio(viewModel.imageCropController.imageAspectRatio, contentMode: .fit)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    .frame(minHeight: 120)
+                    .layoutPriority(1)
+            } else {
+                PlayerPreview(player: viewModel.playerController.player)
+                    .aspectRatio(viewModel.playerController.videoAspectRatio, contentMode: .fit)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    .frame(minHeight: 120)
+                    .background(Color.secondary.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .layoutPriority(1)
+            }
+        }
+    }
+
     private var selectionInfoRow: some View {
         HStack(spacing: 14) {
-            Text("Selection: \(formattedSelectionDuration) s")
+            if viewModel.isShowingVideo {
+                Text("Selection: \(formattedSelectionDuration) s")
+                Text("Quantized frames (5, 9, 13, ...): \(viewModel.playerController.quantizedSelectedFrameCount)")
+            } else if viewModel.isShowingImage {
+                Text(viewModel.selectedImageCropLabel)
+            }
 
-            Text("Quantized frames (5, 9, 13, ...): \(viewModel.playerController.quantizedSelectedFrameCount)")
+            Spacer()
+
+            Text(viewModel.mediaCountLabel)
         }
         .font(.system(size: 12, design: .monospaced))
         .foregroundStyle(.secondary)
@@ -159,10 +193,10 @@ struct ContentView: View {
         VStack(alignment: .center, spacing: 8) {
             Spacer()
 
-            Text("Select an input folder to load videos")
+            Text("Select an input folder to load videos or images")
                 .font(.system(size: 18, weight: .semibold))
 
-            Text("Supported formats: mp4, mov, m4v, mkv, avi, mpg, mpeg, webm")
+            Text("Supported formats: mp4, mov, m4v, mkv, avi, mpg, mpeg, webm, png, jpg, jpeg, webp, heic, heif, bmp, tif, tiff, gif")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
 
@@ -211,8 +245,15 @@ struct ContentView: View {
     }
 
     private var canOpenExportSheet: Bool {
-        viewModel.hasConfiguredOutputFolder &&
-        ClipSelectionQuantization.isQuantized(viewModel.playerController.selectedFrameCount)
+        guard viewModel.hasConfiguredOutputFolder else {
+            return false
+        }
+
+        if viewModel.isShowingImage {
+            return viewModel.imageCropController.hasLoadedImage
+        }
+
+        return ClipSelectionQuantization.isQuantized(viewModel.playerController.selectedFrameCount)
     }
 
     private var exportAlertIsPresented: Binding<Bool> {
@@ -229,8 +270,13 @@ struct ContentView: View {
     private func beginExport() {
         do {
             let request = try viewModel.makeExportRequest()
-            exportWindowCoordinator.present(request: request) { input in
+            exportWindowCoordinator.present(
+                request: request,
+                initialCaption: viewModel.lastExportCaption,
+                initialCategoryText: viewModel.lastExportCategoryText
+            ) { input in
                 _ = try await viewModel.exportClip(request: request, input: input)
+                viewModel.rememberLastExport(input: input)
             }
         } catch {
             exportAlertMessage = error.localizedDescription

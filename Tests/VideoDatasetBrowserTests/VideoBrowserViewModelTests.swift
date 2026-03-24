@@ -36,8 +36,40 @@ final class VideoBrowserViewModelTests: XCTestCase {
             .sorted()
 
         XCTAssertEqual(preparedNames, ["1.mp4", "2.mp4", "3.mp4"])
-        XCTAssertEqual(viewModel.videoURLs.count, 6)
-        XCTAssertEqual(viewModel.selectedVideoURL?.lastPathComponent, "1.mp4")
+        XCTAssertEqual(viewModel.mediaItems.count, 6)
+        XCTAssertEqual(viewModel.selectedMediaURL?.lastPathComponent, "1.mp4")
+    }
+
+    @MainActor
+    func testRememberLastExportPersistsCaptionAndCategories() throws {
+        let defaults = try makeIsolatedDefaults()
+
+        defer {
+            defaults.removePersistentDomain(forName: defaultsSuiteName)
+        }
+
+        let viewModel = VideoBrowserViewModel(
+            defaults: defaults,
+            inputVideoResampler: RecordingVideoPreparer()
+        )
+
+        viewModel.rememberLastExport(
+            input: DatasetRowInput(
+                caption: "a caption",
+                categories: ["cat", "studio"]
+            )
+        )
+
+        XCTAssertEqual(viewModel.lastExportCaption, "a caption")
+        XCTAssertEqual(viewModel.lastExportCategoryText, "cat\nstudio")
+
+        let reloadedViewModel = VideoBrowserViewModel(
+            defaults: defaults,
+            inputVideoResampler: RecordingVideoPreparer()
+        )
+
+        XCTAssertEqual(reloadedViewModel.lastExportCaption, "a caption")
+        XCTAssertEqual(reloadedViewModel.lastExportCategoryText, "cat\nstudio")
     }
 
     private var defaultsSuiteName: String {

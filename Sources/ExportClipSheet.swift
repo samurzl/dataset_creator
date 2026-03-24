@@ -16,6 +16,7 @@ final class ExportPreviewController: ObservableObject {
     }
 
     @Published private(set) var loadingErrorMessage: String?
+    @Published private(set) var previewImage: NSImage?
 
     private var itemDidPlayToEndObserver: NSObjectProtocol?
 
@@ -24,10 +25,14 @@ final class ExportPreviewController: ObservableObject {
         loadingErrorMessage = nil
 
         do {
-            let item = try await ClipExporter.createPreviewItem(for: request)
-            installLooping(for: item)
-            player.replaceCurrentItem(with: item)
-            player.play()
+            if request.isImage {
+                previewImage = try ClipExporter.createPreviewImage(for: request)
+            } else {
+                let item = try await ClipExporter.createPreviewItem(for: request)
+                installLooping(for: item)
+                player.replaceCurrentItem(with: item)
+                player.play()
+            }
         } catch {
             loadingErrorMessage = error.localizedDescription
         }
@@ -36,6 +41,7 @@ final class ExportPreviewController: ObservableObject {
     func stop() {
         backingPlayer?.pause()
         backingPlayer?.replaceCurrentItem(with: nil)
+        previewImage = nil
         removeLoopingObserver()
     }
 
@@ -90,8 +96,22 @@ struct ExportClipSheet: View {
     @State private var exportErrorMessage: String?
     @State private var exportTask: Task<Void, Never>?
 
-    private var isLivePreviewEnabled: Bool {
-        !RuntimeEnvironment.shouldDisableExportPreview
+    init(
+        request: ClipExportRequest,
+        initialCaptionText: String,
+        initialCategoryText: String,
+        onCancel: @escaping () -> Void,
+        onExport: @escaping (DatasetRowInput) async throws -> Void
+    ) {
+        self.request = request
+        self.onCancel = onCancel
+        self.onExport = onExport
+        _captionText = State(initialValue: initialCaptionText)
+        _categoryText = State(initialValue: initialCategoryText)
+    }
+
+    private var isPreviewEnabled: Bool {
+        request.isImage || !RuntimeEnvironment.shouldDisableExportPreview
     }
 
     var body: some View {
@@ -107,7 +127,7 @@ struct ExportClipSheet: View {
                     categorySection
                     generatedSection
 
-                    if isLivePreviewEnabled, let loadingErrorMessage = previewController.loadingErrorMessage {
+                    if isPreviewEnabled, let loadingErrorMessage = previewController.loadingErrorMessage {
                         Text("Preview error: \(loadingErrorMessage)")
                             .font(.system(size: 12))
                             .foregroundStyle(.red)
@@ -128,7 +148,7 @@ struct ExportClipSheet: View {
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task(id: request.id) {
-            guard isLivePreviewEnabled else { return }
+            guard isPreviewEnabled else { return }
             await previewController.load(request: request)
         }
         .onDisappear {
@@ -140,7 +160,26 @@ struct ExportClipSheet: View {
 
     private var previewSection: some View {
         Group {
-            if isLivePreviewEnabled {
+            if request.isImage {
+                Group {
+                    if let previewImage = previewController.previewImage {
+                        Image(nsImage: previewImage)
+                            .resizable()
+                            .interpolation(.high)
+                            .scaledToFit()
+                    } else {
+                        Color.secondary.opacity(0.1)
+                            .overlay(
+                                ProgressView()
+                                    .controlSize(.small)
+                            )
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 220)
+                .background(Color.secondary.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            } else if isPreviewEnabled {
                 PlayerPreview(player: previewController.player)
                     .aspectRatio(max(request.aspectRatio, 0.1), contentMode: .fit)
                     .frame(maxWidth: .infinity)
@@ -217,7 +256,7 @@ struct ExportClipSheet: View {
             Button("Add to Dataset", action: performExport)
                 .disabled(
                     isExporting ||
-                    (isLivePreviewEnabled && previewController.loadingErrorMessage != nil)
+                    (isPreviewEnabled && previewController.loadingErrorMessage != nil)
                 )
                 .keyboardShortcut(.defaultAction)
         }
