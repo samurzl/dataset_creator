@@ -121,6 +121,41 @@ final class ClipExportingTests: XCTestCase {
         XCTAssertEqual(Array(pixelData.prefix(4)), [255, 0, 0, 255])
     }
 
+    func testExportVideoWritesSelectedCropRegion() async throws {
+        let rootURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let sourceURL = try await makeQuadrantVideo(in: rootURL)
+        let outputURL = rootURL.appendingPathComponent("video-crop.mp4")
+        let request = ClipExportRequest(
+            videoURL: sourceURL,
+            inFrame: 0,
+            frameCount: 5,
+            frameRate: 5,
+            aspectRatio: 1,
+            cropRect: CGRect(x: 0, y: 0, width: 32, height: 32)
+        )
+
+        _ = try await ClipExporter.exportClip(request: request, to: outputURL)
+
+        let exportedAsset = AVAsset(url: outputURL)
+        let videoTracks = try await exportedAsset.loadTracks(withMediaType: .video)
+        let videoTrack = try XCTUnwrap(videoTracks.first)
+        let naturalSize = try await videoTrack.load(.naturalSize)
+        XCTAssertEqual(naturalSize.width, 32, accuracy: 0.1)
+        XCTAssertEqual(naturalSize.height, 32, accuracy: 0.1)
+
+        let generator = AVAssetImageGenerator(asset: exportedAsset)
+        generator.appliesPreferredTrackTransform = true
+        let firstFrame = try generator.copyCGImage(at: .zero, actualTime: nil)
+        let bitmap = NSBitmapImageRep(cgImage: firstFrame)
+        let sampledColor = try XCTUnwrap(bitmap.colorAt(x: 0, y: 0))
+
+        XCTAssertGreaterThan(sampledColor.redComponent, 0.7)
+        XCTAssertLessThan(sampledColor.greenComponent, 0.3)
+        XCTAssertLessThan(sampledColor.blueComponent, 0.3)
+    }
+
     private func makeTemporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
@@ -266,6 +301,120 @@ final class ClipExportingTests: XCTestCase {
         let bitmap = NSBitmapImageRep(cgImage: cgImage)
         let pngData = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
         try pngData.write(to: outputURL)
+    }
+
+    private func makeQuadrantVideo(in rootURL: URL) async throws -> URL {
+        let outputURL = rootURL.appendingPathComponent("quadrant.mov")
+        let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
+        let videoSize = 64
+        let videoSettings: [String: Any] = [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: videoSize,
+            AVVideoHeightKey: videoSize
+        ]
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
+        input.expectsMediaDataInRealTime = false
+
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: input,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA),
+                kCVPixelBufferWidthKey as String: videoSize,
+                kCVPixelBufferHeightKey as String: videoSize,
+                kCVPixelBufferCGImageCompatibilityKey as String: true,
+                kCVPixelBufferCGBitmapContextCompatibilityKey as String: true
+            ]
+        )
+
+        XCTAssertTrue(writer.canAdd(input))
+        writer.add(input)
+        XCTAssertTrue(writer.startWriting())
+        writer.startSession(atSourceTime: .zero)
+
+        for frameIndex in 0..<5 {
+            while !input.isReadyForMoreMediaData {
+                try await Task.sleep(for: .milliseconds(1))
+            }
+
+            let pixelBuffer = try makeQuadrantPixelBuffer(width: videoSize, height: videoSize)
+            let presentationTime = CMTime(value: Int64(frameIndex), timescale: 5)
+            XCTAssertTrue(adaptor.append(pixelBuffer, withPresentationTime: presentationTime))
+        }
+
+        input.markAsFinished()
+
+        await withCheckedContinuation { continuation in
+            writer.finishWriting {
+                continuation.resume()
+            }
+        }
+
+        if let error = writer.error {
+            throw error
+        }
+        XCTAssertEqual(writer.status, .completed)
+        return outputURL
+    }
+
+    private func makeQuadrantPixelBuffer(width: Int, height: Int) throws -> CVPixelBuffer {
+        var maybeBuffer: CVPixelBuffer?
+        let status = CVPixelBufferCreate(
+            nil,
+            width,
+            height,
+            kCVPixelFormatType_32BGRA,
+            [
+                kCVPixelBufferCGImageCompatibilityKey: true,
+                kCVPixelBufferCGBitmapContextCompatibilityKey: true
+            ] as CFDictionary,
+            &maybeBuffer
+        )
+
+        guard status == kCVReturnSuccess, let pixelBuffer = maybeBuffer else {
+            throw XCTSkip("Failed to create test pixel buffer.")
+        }
+
+        CVPixelBufferLockBaseAddress(pixelBuffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
+
+        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else {
+            throw XCTSkip("Missing test pixel buffer base address.")
+        }
+
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+        for y in 0..<height {
+            for x in 0..<width {
+                let row = baseAddress.advanced(by: y * bytesPerRow)
+                let pixel = row.advanced(by: x * 4)
+                let bytes = pixel.assumingMemoryBound(to: UInt8.self)
+                let halfWidth = width / 2
+                let halfHeight = height / 2
+
+                if x < halfWidth && y < halfHeight {
+                    bytes[0] = 0
+                    bytes[1] = 0
+                    bytes[2] = 255
+                    bytes[3] = 255
+                } else if x >= halfWidth && y < halfHeight {
+                    bytes[0] = 0
+                    bytes[1] = 255
+                    bytes[2] = 0
+                    bytes[3] = 255
+                } else if x < halfWidth && y >= halfHeight {
+                    bytes[0] = 255
+                    bytes[1] = 0
+                    bytes[2] = 0
+                    bytes[3] = 255
+                } else {
+                    bytes[0] = 0
+                    bytes[1] = 255
+                    bytes[2] = 255
+                    bytes[3] = 255
+                }
+            }
+        }
+
+        return pixelBuffer
     }
 
     private func assetContainsSamples(asset: AVAsset, track: AVAssetTrack) -> Bool {

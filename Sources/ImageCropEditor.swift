@@ -136,7 +136,7 @@ struct ImageCropEditor: View {
     var body: some View {
         GeometryReader { geometry in
             let canvasSize = geometry.size
-            let imageFrame = fittedRect(for: controller.imagePixelSize, inside: canvasSize)
+            let imageFrame = fittedCropFrame(for: controller.imagePixelSize, inside: canvasSize)
             let visibleCropRect = draftCropRect ?? controller.displayedCropRect(in: imageFrame)
 
             ZStack(alignment: .topLeading) {
@@ -151,7 +151,7 @@ struct ImageCropEditor: View {
                         .position(x: imageFrame.midX, y: imageFrame.midY)
 
                     if let visibleCropRect {
-                        cropOverlay(imageFrame: imageFrame, cropRect: visibleCropRect)
+                        CropOverlay(imageFrame: imageFrame, cropRect: visibleCropRect)
                     }
 
                     Text(controller.hasCustomCrop ? "Drag to replace crop" : "Drag to crop")
@@ -179,7 +179,115 @@ struct ImageCropEditor: View {
         }
     }
 
-    private func cropOverlay(imageFrame: CGRect, cropRect: CGRect) -> some View {
+    private func cropGesture(imageFrame: CGRect) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                guard controller.hasLoadedImage else { return }
+                guard imageFrame.width > 0, imageFrame.height > 0 else { return }
+
+                if dragStartPoint == nil {
+                    guard imageFrame.contains(value.startLocation) else { return }
+                    dragStartPoint = clampedCropPoint(value.startLocation, to: imageFrame)
+                }
+
+                guard let dragStartPoint else { return }
+                let currentPoint = clampedCropPoint(value.location, to: imageFrame)
+                draftCropRect = cropRect(from: dragStartPoint, to: currentPoint)
+            }
+            .onEnded { value in
+                defer {
+                    dragStartPoint = nil
+                    draftCropRect = nil
+                }
+
+                guard controller.hasLoadedImage else { return }
+                guard let dragStartPoint else { return }
+
+                let currentPoint = clampedCropPoint(value.location, to: imageFrame)
+                controller.replaceCrop(
+                    withDisplayRect: cropRect(from: dragStartPoint, to: currentPoint),
+                    in: imageFrame
+                )
+            }
+    }
+}
+
+struct VideoCropEditor: View {
+    @ObservedObject var playerController: VideoPlayerController
+
+    @State private var dragStartPoint: CGPoint?
+    @State private var draftCropRect: CGRect?
+
+    var body: some View {
+        GeometryReader { geometry in
+            let canvasSize = geometry.size
+            let videoFrame = fittedCropFrame(for: playerController.videoPixelSize, inside: canvasSize)
+            let visibleCropRect = draftCropRect ?? playerController.displayedCropRect(in: videoFrame)
+
+            ZStack(alignment: .topLeading) {
+                PlayerPreview(player: playerController.player)
+                    .aspectRatio(playerController.videoAspectRatio, contentMode: .fit)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    .frame(minHeight: 120)
+                    .background(Color.secondary.opacity(0.1))
+
+                if let visibleCropRect {
+                    CropOverlay(imageFrame: videoFrame, cropRect: visibleCropRect)
+                }
+
+                Text(playerController.hasCustomCrop ? "Drag to replace crop" : "Drag to crop")
+                    .font(.system(size: 11, weight: .medium))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(Color.black.opacity(0.7))
+                    .foregroundStyle(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .padding(10)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .contentShape(Rectangle())
+            .gesture(cropGesture(videoFrame: videoFrame))
+        }
+    }
+
+    private func cropGesture(videoFrame: CGRect) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                guard playerController.videoPixelSize.width > 0, playerController.videoPixelSize.height > 0 else { return }
+                guard videoFrame.width > 0, videoFrame.height > 0 else { return }
+
+                if dragStartPoint == nil {
+                    guard videoFrame.contains(value.startLocation) else { return }
+                    dragStartPoint = clampedCropPoint(value.startLocation, to: videoFrame)
+                }
+
+                guard let dragStartPoint else { return }
+                let currentPoint = clampedCropPoint(value.location, to: videoFrame)
+                draftCropRect = cropRect(from: dragStartPoint, to: currentPoint)
+            }
+            .onEnded { value in
+                defer {
+                    dragStartPoint = nil
+                    draftCropRect = nil
+                }
+
+                guard playerController.videoPixelSize.width > 0, playerController.videoPixelSize.height > 0 else { return }
+                guard let dragStartPoint else { return }
+
+                let currentPoint = clampedCropPoint(value.location, to: videoFrame)
+                playerController.replaceCrop(
+                    withDisplayRect: cropRect(from: dragStartPoint, to: currentPoint),
+                    in: videoFrame
+                )
+            }
+    }
+}
+
+private struct CropOverlay: View {
+    let imageFrame: CGRect
+    let cropRect: CGRect
+
+    var body: some View {
         ZStack(alignment: .topLeading) {
             Path { path in
                 path.addRect(imageFrame)
@@ -194,71 +302,39 @@ struct ImageCropEditor: View {
                 .shadow(color: Color.black.opacity(0.45), radius: 6)
         }
     }
+}
 
-    private func cropGesture(imageFrame: CGRect) -> some Gesture {
-        DragGesture(minimumDistance: 0)
-            .onChanged { value in
-                guard controller.hasLoadedImage else { return }
-                guard imageFrame.width > 0, imageFrame.height > 0 else { return }
-
-                if dragStartPoint == nil {
-                    guard imageFrame.contains(value.startLocation) else { return }
-                    dragStartPoint = clampedPoint(value.startLocation, to: imageFrame)
-                }
-
-                guard let dragStartPoint else { return }
-                let currentPoint = clampedPoint(value.location, to: imageFrame)
-                draftCropRect = rect(from: dragStartPoint, to: currentPoint)
-            }
-            .onEnded { value in
-                defer {
-                    dragStartPoint = nil
-                    draftCropRect = nil
-                }
-
-                guard controller.hasLoadedImage else { return }
-                guard let dragStartPoint else { return }
-
-                let currentPoint = clampedPoint(value.location, to: imageFrame)
-                controller.replaceCrop(
-                    withDisplayRect: rect(from: dragStartPoint, to: currentPoint),
-                    in: imageFrame
-                )
-            }
+private func fittedCropFrame(for mediaSize: CGSize, inside canvasSize: CGSize) -> CGRect {
+    guard mediaSize.width > 0, mediaSize.height > 0, canvasSize.width > 0, canvasSize.height > 0 else {
+        return .zero
     }
 
-    private func fittedRect(for imageSize: CGSize, inside canvasSize: CGSize) -> CGRect {
-        guard imageSize.width > 0, imageSize.height > 0, canvasSize.width > 0, canvasSize.height > 0 else {
-            return .zero
-        }
+    let scale = min(canvasSize.width / mediaSize.width, canvasSize.height / mediaSize.height)
+    let width = mediaSize.width * scale
+    let height = mediaSize.height * scale
 
-        let scale = min(canvasSize.width / imageSize.width, canvasSize.height / imageSize.height)
-        let width = imageSize.width * scale
-        let height = imageSize.height * scale
+    return CGRect(
+        x: (canvasSize.width - width) / 2,
+        y: (canvasSize.height - height) / 2,
+        width: width,
+        height: height
+    )
+}
 
-        return CGRect(
-            x: (canvasSize.width - width) / 2,
-            y: (canvasSize.height - height) / 2,
-            width: width,
-            height: height
-        )
-    }
+private func clampedCropPoint(_ point: CGPoint, to rect: CGRect) -> CGPoint {
+    CGPoint(
+        x: min(max(point.x, rect.minX), rect.maxX),
+        y: min(max(point.y, rect.minY), rect.maxY)
+    )
+}
 
-    private func clampedPoint(_ point: CGPoint, to rect: CGRect) -> CGPoint {
-        CGPoint(
-            x: min(max(point.x, rect.minX), rect.maxX),
-            y: min(max(point.y, rect.minY), rect.maxY)
-        )
-    }
-
-    private func rect(from startPoint: CGPoint, to endPoint: CGPoint) -> CGRect {
-        CGRect(
-            x: min(startPoint.x, endPoint.x),
-            y: min(startPoint.y, endPoint.y),
-            width: abs(endPoint.x - startPoint.x),
-            height: abs(endPoint.y - startPoint.y)
-        )
-    }
+private func cropRect(from startPoint: CGPoint, to endPoint: CGPoint) -> CGRect {
+    CGRect(
+        x: min(startPoint.x, endPoint.x),
+        y: min(startPoint.y, endPoint.y),
+        width: abs(endPoint.x - startPoint.x),
+        height: abs(endPoint.y - startPoint.y)
+    )
 }
 
 extension NSImage {

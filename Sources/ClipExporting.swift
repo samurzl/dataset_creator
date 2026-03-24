@@ -11,6 +11,7 @@ struct ClipExportRequest: Identifiable {
         let inFrame: Int
         let frameCount: Int
         let frameRate: Double
+        let cropRect: CGRect?
     }
 
     struct ImageSelection {
@@ -33,17 +34,27 @@ struct ClipExportRequest: Identifiable {
         inFrame: Int,
         frameCount: Int,
         frameRate: Double,
-        aspectRatio: CGFloat
+        aspectRatio: CGFloat,
+        cropRect: CGRect? = nil
     ) {
+        let resolvedCropRect = cropRect?.standardized
         source = .video(
             VideoSelection(
                 videoURL: videoURL,
                 inFrame: inFrame,
                 frameCount: frameCount,
-                frameRate: frameRate
+                frameRate: frameRate,
+                cropRect: resolvedCropRect
             )
         )
-        self.aspectRatio = aspectRatio
+
+        if let resolvedCropRect {
+            let width = max(resolvedCropRect.width, 1)
+            let height = max(resolvedCropRect.height, 1)
+            self.aspectRatio = width / height
+        } else {
+            self.aspectRatio = aspectRatio
+        }
     }
 
     init(
@@ -135,6 +146,11 @@ struct ClipExportRequest: Identifiable {
         }
         return videoSelection.frameRate
     }
+
+    var videoCropRect: CGRect? {
+        guard let videoSelection else { return nil }
+        return videoSelection.cropRect
+    }
 }
 
 enum ClipExportError: LocalizedError {
@@ -211,6 +227,11 @@ enum ClipExporter {
     private struct RasterizedImage {
         let cgImage: CGImage
         let pixelSize: CGSize
+    }
+
+    private struct VideoRenderConfiguration {
+        let readerOutput: AVAssetReaderOutput
+        let writerTransform: CGAffineTransform
     }
 
     private static let pollingIntervalNanoseconds: UInt64 = 1_000_000
@@ -295,7 +316,17 @@ enum ClipExporter {
             try? compositionAudioTrack.insertTimeRange(timeRange, of: sourceAudioTrack, at: .zero)
         }
 
-        return AVPlayerItem(asset: composition)
+        let playerItem = AVPlayerItem(asset: composition)
+        if let cropRect = request.videoCropRect {
+            let previewTimeRange = CMTimeRange(start: .zero, duration: timeRange.duration)
+            playerItem.videoComposition = try await makeVideoComposition(
+                for: compositionVideoTrack,
+                timeRange: previewTimeRange,
+                cropRect: cropRect,
+                frameRate: request.frameRate
+            )
+        }
+        return playerItem
     }
 
     @MainActor
@@ -484,6 +515,84 @@ enum ClipExporter {
         )
     }
 
+    private static func makeVideoRenderConfiguration(
+        for request: ClipExportRequest,
+        sourceVideoTrack: AVAssetTrack,
+        sourceTimeRange: CMTimeRange,
+        outputSettings: [String: Any]
+    ) async throws -> VideoRenderConfiguration {
+        guard let cropRect = request.videoCropRect else {
+            let trackOutput = AVAssetReaderTrackOutput(track: sourceVideoTrack, outputSettings: outputSettings)
+            return VideoRenderConfiguration(
+                readerOutput: trackOutput,
+                writerTransform: try await sourceVideoTrack.load(.preferredTransform)
+            )
+        }
+
+        let videoComposition = try await makeVideoComposition(
+            for: sourceVideoTrack,
+            timeRange: sourceTimeRange,
+            cropRect: cropRect,
+            frameRate: request.frameRate
+        )
+        let compositionOutput = AVAssetReaderVideoCompositionOutput(
+            videoTracks: [sourceVideoTrack],
+            videoSettings: outputSettings
+        )
+        compositionOutput.videoComposition = videoComposition
+
+        return VideoRenderConfiguration(
+            readerOutput: compositionOutput,
+            writerTransform: .identity
+        )
+    }
+
+    private static func makeVideoComposition(
+        for videoTrack: AVAssetTrack,
+        timeRange: CMTimeRange,
+        cropRect: CGRect,
+        frameRate: Double
+    ) async throws -> AVMutableVideoComposition {
+        let preferredTransform = try await videoTrack.load(.preferredTransform)
+        let naturalSize = try await videoTrack.load(.naturalSize)
+        let displaySize = displayedVideoSize(
+            naturalSize: naturalSize,
+            preferredTransform: preferredTransform
+        )
+        let resolvedCropRect = resolveCropRect(cropRect, within: displaySize)
+        let translation = CGAffineTransform(
+            translationX: -resolvedCropRect.minX,
+            y: -resolvedCropRect.minY
+        )
+
+        let instruction = AVMutableVideoCompositionInstruction()
+        instruction.timeRange = timeRange
+
+        let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: videoTrack)
+        layerInstruction.setTransform(preferredTransform.concatenating(translation), at: timeRange.start)
+        instruction.layerInstructions = [layerInstruction]
+
+        let videoComposition = AVMutableVideoComposition()
+        videoComposition.instructions = [instruction]
+        videoComposition.renderSize = resolvedCropRect.size
+        videoComposition.frameDuration = CMTime(
+            seconds: 1 / max(frameRate, 1),
+            preferredTimescale: 60_000
+        )
+        return videoComposition
+    }
+
+    private static func displayedVideoSize(
+        naturalSize: CGSize,
+        preferredTransform: CGAffineTransform
+    ) -> CGSize {
+        let transformedSize = naturalSize.applying(preferredTransform)
+        return CGSize(
+            width: abs(transformedSize.width),
+            height: abs(transformedSize.height)
+        )
+    }
+
     private static func writeClipWithTimingFallback(
         request: ClipExportRequest,
         to outputURL: URL,
@@ -569,15 +678,22 @@ enum ClipExporter {
         let safeAudioDurationSeconds = min(request.durationSeconds, availableDurationSeconds)
 
         let reader = try AVAssetReader(asset: sourceAsset)
-        reader.timeRange = CMTimeRange(
+        let sourceTimeRange = CMTimeRange(
             start: CMTime(seconds: startSeconds, preferredTimescale: 60_000),
             duration: CMTime(seconds: safeVideoDurationSeconds, preferredTimescale: 60_000)
         )
+        reader.timeRange = sourceTimeRange
 
         let readerOutputSettings: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)
         ]
-        let readerOutput = AVAssetReaderTrackOutput(track: sourceVideoTrack, outputSettings: readerOutputSettings)
+        let videoRenderConfiguration = try await makeVideoRenderConfiguration(
+            for: request,
+            sourceVideoTrack: sourceVideoTrack,
+            sourceTimeRange: sourceTimeRange,
+            outputSettings: readerOutputSettings
+        )
+        let readerOutput = videoRenderConfiguration.readerOutput
         readerOutput.alwaysCopiesSampleData = false
 
         guard reader.canAdd(readerOutput) else {
@@ -601,7 +717,6 @@ enum ClipExporter {
 
         let renderWidth = max(CVPixelBufferGetWidth(firstSourceBuffer), 1)
         let renderHeight = max(CVPixelBufferGetHeight(firstSourceBuffer), 1)
-        let preferredTransform = try await sourceVideoTrack.load(.preferredTransform)
         let roundedSourceEstimatedBitRate = Int(sourceEstimatedBitRate.rounded())
 
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
@@ -649,7 +764,7 @@ enum ClipExporter {
         // These exports are tiny clips, so predictable completion matters more than multipass gains.
         writerInput.performsMultiPassEncodingIfSupported = false
         writerInput.mediaTimeScale = 60_000
-        writerInput.transform = preferredTransform
+        writerInput.transform = videoRenderConfiguration.writerTransform
 
         let adaptorAttributes: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA),
@@ -791,7 +906,7 @@ enum ClipExporter {
     }
 
     private static func readNextDecodedSampleBuffer(
-        output: AVAssetReaderTrackOutput,
+        output: AVAssetReaderOutput,
         reader: AVAssetReader,
         timeoutSeconds: Double,
         stage: String

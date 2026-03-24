@@ -132,6 +132,9 @@ struct ContentView: View {
                         action: viewModel.playerController.toggleLoopPlayback
                     )
                     .disabled(viewModel.playerController.totalFrames <= 1)
+
+                    Button("Reset Crop", action: viewModel.playerController.resetCrop)
+                        .disabled(!viewModel.playerController.hasCustomCrop)
                 }
 
                 if viewModel.isShowingImage {
@@ -161,12 +164,10 @@ struct ContentView: View {
                     .frame(minHeight: 120)
                     .layoutPriority(1)
             } else {
-                PlayerPreview(player: viewModel.playerController.player)
+                VideoCropEditor(playerController: viewModel.playerController)
                     .aspectRatio(viewModel.playerController.videoAspectRatio, contentMode: .fit)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                     .frame(minHeight: 120)
-                    .background(Color.secondary.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .layoutPriority(1)
             }
         }
@@ -177,6 +178,7 @@ struct ContentView: View {
             if viewModel.isShowingVideo {
                 Text("Selection: \(formattedSelectionDuration) s")
                 Text("Quantized frames (5, 9, 13, ...): \(viewModel.playerController.quantizedSelectedFrameCount)")
+                Text(viewModel.selectedVideoCropLabel)
             } else if viewModel.isShowingImage {
                 Text(viewModel.selectedImageCropLabel)
             }

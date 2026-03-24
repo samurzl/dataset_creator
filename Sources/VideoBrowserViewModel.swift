@@ -162,6 +162,21 @@ final class VideoBrowserViewModel: ObservableObject {
         return "Crop: full image (\(Int(imageSize.width)) x \(Int(imageSize.height)) px)"
     }
 
+    var selectedVideoCropLabel: String {
+        let videoSize = playerController.videoPixelSize
+        let cropSize = playerController.cropPixelSize
+
+        guard videoSize.width > 0, videoSize.height > 0 else {
+            return "Crop unavailable"
+        }
+
+        if playerController.hasCustomCrop {
+            return "Crop: \(Int(cropSize.width)) x \(Int(cropSize.height)) px"
+        }
+
+        return "Crop: full frame (\(Int(videoSize.width)) x \(Int(videoSize.height)) px)"
+    }
+
     func makeExportRequest() throws -> ClipExportRequest {
         guard let selectedMediaURL, let selectedMediaKind else {
             throw ClipExportError.noMediaSelected
@@ -184,7 +199,8 @@ final class VideoBrowserViewModel: ObservableObject {
                 inFrame: playerController.inFrame,
                 frameCount: frameCount,
                 frameRate: frameRate,
-                aspectRatio: playerController.videoAspectRatio
+                aspectRatio: playerController.videoAspectRatio,
+                cropRect: playerController.hasCustomCrop ? playerController.exportCropRectPixels : nil
             )
         case .image:
             let cropRect = imageCropController.exportCropRectPixels

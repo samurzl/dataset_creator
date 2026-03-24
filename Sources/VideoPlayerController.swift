@@ -13,6 +13,8 @@ final class VideoPlayerController: ObservableObject {
     @Published private(set) var isScrubbing = false
     @Published private(set) var isLoopPlaying = false
     @Published private(set) var videoAspectRatio: CGFloat = 16.0 / 9.0
+    @Published private(set) var videoPixelSize: CGSize = .zero
+    @Published private(set) var cropRectNormalized: CGRect?
 
     var currentFrameRate: Double {
         frameRate
@@ -30,6 +32,36 @@ final class VideoPlayerController: ObservableObject {
 
     var quantizedSelectedFrameCount: Int {
         ClipSelectionQuantization.quantizeDown(selectedFrameCount)
+    }
+
+    var hasCustomCrop: Bool {
+        cropRectNormalized != nil
+    }
+
+    var cropPixelSize: CGSize {
+        exportCropRectPixels.size
+    }
+
+    var exportCropRectPixels: CGRect {
+        guard videoPixelSize.width > 0, videoPixelSize.height > 0 else {
+            return .zero
+        }
+
+        let normalizedRect = cropRectNormalized ?? CGRect(x: 0, y: 0, width: 1, height: 1)
+        let videoWidth = videoPixelSize.width
+        let videoHeight = videoPixelSize.height
+
+        let minX = min(max(Int((normalizedRect.minX * videoWidth).rounded(.down)), 0), max(Int(videoWidth) - 1, 0))
+        let minY = min(max(Int((normalizedRect.minY * videoHeight).rounded(.down)), 0), max(Int(videoHeight) - 1, 0))
+        let maxX = max(min(Int((normalizedRect.maxX * videoWidth).rounded(.up)), Int(videoWidth)), minX + 1)
+        let maxY = max(min(Int((normalizedRect.maxY * videoHeight).rounded(.up)), Int(videoHeight)), minY + 1)
+
+        return CGRect(
+            x: minX,
+            y: minY,
+            width: maxX - minX,
+            height: maxY - minY
+        )
     }
 
     private var timeObserverToken: Any?
@@ -57,8 +89,10 @@ final class VideoPlayerController: ObservableObject {
         durationSeconds = 0
         frameRate = 30
         videoAspectRatio = 16.0 / 9.0
+        videoPixelSize = .zero
         isLoopPlaying = false
         isRangeMarkerDragging = false
+        cropRectNormalized = nil
 
         applyMetadata(from: item)
         inFrame = 0
@@ -78,9 +112,11 @@ final class VideoPlayerController: ObservableObject {
         durationSeconds = 0
         frameRate = 30
         videoAspectRatio = 16.0 / 9.0
+        videoPixelSize = .zero
         isScrubbing = false
         isLoopPlaying = false
         isRangeMarkerDragging = false
+        cropRectNormalized = nil
     }
 
     func beginScrubbing() {
@@ -152,6 +188,42 @@ final class VideoPlayerController: ObservableObject {
         isLoopPlaying ? stopLoopPlayback() : startLoopPlayback()
     }
 
+    func resetCrop() {
+        guard videoPixelSize.width > 0, videoPixelSize.height > 0 else { return }
+        cropRectNormalized = nil
+    }
+
+    func replaceCrop(withDisplayRect displayRect: CGRect, in videoFrame: CGRect) {
+        guard videoPixelSize.width > 0, videoPixelSize.height > 0 else { return }
+        guard videoFrame.width > 0, videoFrame.height > 0 else { return }
+
+        let boundedRect = displayRect.standardized.intersection(videoFrame)
+        guard boundedRect.width >= 4, boundedRect.height >= 4 else { return }
+
+        let normalizedRect = CGRect(
+            x: (boundedRect.minX - videoFrame.minX) / videoFrame.width,
+            y: (boundedRect.minY - videoFrame.minY) / videoFrame.height,
+            width: boundedRect.width / videoFrame.width,
+            height: boundedRect.height / videoFrame.height
+        )
+        .standardized
+        .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+
+        guard normalizedRect.width > 0, normalizedRect.height > 0 else { return }
+        cropRectNormalized = normalizedRect
+    }
+
+    func displayedCropRect(in videoFrame: CGRect) -> CGRect? {
+        guard let cropRectNormalized else { return nil }
+
+        return CGRect(
+            x: videoFrame.minX + (cropRectNormalized.minX * videoFrame.width),
+            y: videoFrame.minY + (cropRectNormalized.minY * videoFrame.height),
+            width: cropRectNormalized.width * videoFrame.width,
+            height: cropRectNormalized.height * videoFrame.height
+        )
+    }
+
     private func startLoopPlayback() {
         guard player.currentItem != nil, totalFrames > 1 else { return }
         isRangeMarkerDragging = false
@@ -187,6 +259,7 @@ final class VideoPlayerController: ObservableObject {
             let height = abs(transformedSize.height)
             if width > 0, height > 0 {
                 videoAspectRatio = width / height
+                videoPixelSize = CGSize(width: width, height: height)
             }
         }
 

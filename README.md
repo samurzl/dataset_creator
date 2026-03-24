@@ -9,7 +9,7 @@ Native macOS GUI app to browse videos and images from an input folder, trim or c
 - Auto-load supported videos and images from the input folder.
 - Input videos are normalized to 16 fps before preview and export.
 - Large media preview that fills most of the window.
-- Playback timeline scrubber for videos and drag-to-crop selection for images.
+- Playback timeline scrubber for videos and drag-to-crop selection for both videos and images.
 - Navigation controls to move through media in the folder.
 - Export selected videos into `positive/<n>.mp4`, preserving source audio when present.
 - Export cropped images into `positive/<n>.png`.
