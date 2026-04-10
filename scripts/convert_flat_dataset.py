@@ -48,7 +48,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("input_dir", type=Path, help="Directory containing flat media/txt pairs.")
     parser.add_argument("output_dir", type=Path, help="Directory to write dataset.json and positive/.")
-    parser.add_argument("category", help="Single category applied to every dataset row.")
     return parser.parse_args()
 
 
@@ -152,11 +151,7 @@ def validate_media_path(media_path: Path) -> str | None:
     return None
 
 
-def convert_dataset(input_dir: Path, output_dir: Path, category: str) -> tuple[int, Path]:
-    trimmed_category = category.strip()
-    if not trimmed_category:
-        raise ValueError("Category must not be blank.")
-
+def convert_dataset(input_dir: Path, output_dir: Path) -> tuple[int, Path]:
     if not input_dir.exists():
         raise ValueError(f"Input directory '{input_dir}' does not exist.")
     if not input_dir.is_dir():
@@ -168,7 +163,7 @@ def convert_dataset(input_dir: Path, output_dir: Path, category: str) -> tuple[i
 
     rows = []
 
-    for index, pair in enumerate(collect_pairs(input_dir), start=1):
+    for pair in collect_pairs(input_dir):
         validation_error = validate_media_path(pair.media_path)
         if validation_error is not None:
             print(
@@ -189,21 +184,6 @@ def convert_dataset(input_dir: Path, output_dir: Path, category: str) -> tuple[i
             {
                 "caption": caption,
                 "media_path": f"positive/{destination_name}",
-                "nsync": {
-                    "categories": [trimmed_category],
-                    "negatives": [
-                        {
-                            "media": "synthetic",
-                            "prompt": caption,
-                            "caption": caption,
-                        }
-                    ],
-                    "anchors": [
-                        {
-                            "required_categories": [trimmed_category],
-                        }
-                    ],
-                },
             }
         )
 
@@ -219,7 +199,6 @@ def main() -> int:
         row_count, dataset_json = convert_dataset(
             input_dir=args.input_dir.expanduser().resolve(),
             output_dir=args.output_dir.expanduser().resolve(),
-            category=args.category,
         )
     except (OSError, UnicodeError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)

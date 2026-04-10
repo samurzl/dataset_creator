@@ -1,6 +1,6 @@
 # VideoDatasetBrowser (macOS)
 
-Native macOS GUI app to browse videos and images from an input folder, trim or crop them, and author Advanced Structured NSYNC datasets.
+Native macOS GUI app to browse videos and images from an input folder, trim or crop them, and author flat captioned datasets.
 
 ## Features
 
@@ -13,9 +13,9 @@ Native macOS GUI app to browse videos and images from an input folder, trim or c
 - Navigation controls to move through media in the folder.
 - Export selected videos into `positive/<n>.mp4`, preserving source audio when present.
 - Export cropped images into `positive/<n>.png`.
-- Append validated Advanced NSYNC rows to `dataset.json`.
-- Author per-row caption and categories from the export sheet, with one synthetic negative and one anchor per category generated automatically.
-- Prefill the export caption and categories with the last successfully exported values.
+- Append validated flat rows to `dataset.json`.
+- Author a caption for each exported row from the export sheet.
+- Prefill the export caption with the last successfully exported value.
 
 ## Dataset output
 
@@ -25,7 +25,20 @@ The selected dataset folder becomes the dataset root. The app writes:
 - `positive/<n>.mp4`
 - `positive/<n>.png`
 
-The generated dataset rows use the Advanced Structured NSYNC JSON format with fixed `caption`, `media_path`, and `nsync` keys.
+The generated dataset rows use a flat JSON format with fixed `caption` and `media_path` keys:
+
+```json
+[
+  {
+    "caption": "A woman walking through a rainy city street at night, neon reflections on the wet pavement.",
+    "media_path": "positive/1.mp4"
+  },
+  {
+    "caption": "A static portrait of a red bicycle leaning against a white wall.",
+    "media_path": "positive/2.png"
+  }
+]
+```
 
 ## Flat dataset conversion helper
 
@@ -42,7 +55,7 @@ dataset/
 you can convert it into this repo's dataset format with:
 
 ```bash
-python3 scripts/convert_flat_dataset.py /path/to/input /path/to/output my-category
+python3 scripts/convert_flat_dataset.py /path/to/input /path/to/output
 ```
 
 This writes:
@@ -50,7 +63,7 @@ This writes:
 - `dataset.json`
 - `positive/<n>.<ext>`
 
-The converter expects exactly one `.txt` file and exactly one media file per stem, copies media into `positive/`, applies the same single category to every row, adds one synthetic negative with `caption == prompt == txt contents`, and adds one anchor with `required_categories = [category]`.
+The converter expects exactly one `.txt` file and exactly one media file per stem, copies media into `positive/`, and writes one flat row per pair with the caption taken from the `.txt` file.
 
 If Pillow is installed, unreadable image files are skipped with a warning and are not copied into `positive/` or included in `dataset.json`.
 

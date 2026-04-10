@@ -20,7 +20,6 @@ final class ExportWindowCoordinator: NSObject, ObservableObject, NSWindowDelegat
     func present(
         request: ClipExportRequest,
         initialCaption: String,
-        initialCategoryText: String,
         onExport: @escaping (DatasetRowInput) async throws -> Void
     ) {
         close()
@@ -28,7 +27,6 @@ final class ExportWindowCoordinator: NSObject, ObservableObject, NSWindowDelegat
         let rootView = ExportClipSheet(
             request: request,
             initialCaptionText: initialCaption,
-            initialCategoryText: initialCategoryText,
             onCancel: { [weak self] in
                 self?.close()
             },
@@ -274,8 +272,7 @@ struct ContentView: View {
             let request = try viewModel.makeExportRequest()
             exportWindowCoordinator.present(
                 request: request,
-                initialCaption: viewModel.lastExportCaption,
-                initialCategoryText: viewModel.lastExportCategoryText
+                initialCaption: viewModel.lastExportCaption
             ) { input in
                 _ = try await viewModel.exportClip(request: request, input: input)
                 viewModel.rememberLastExport(input: input)

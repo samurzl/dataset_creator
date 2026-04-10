@@ -72,14 +72,11 @@ final class ExportPreviewController: ObservableObject {
 
 private enum ExportFormError: LocalizedError {
     case blankCaption
-    case blankCategory
 
     var errorDescription: String? {
         switch self {
         case .blankCaption:
             return "Caption is required."
-        case .blankCategory:
-            return "At least one category is required."
         }
     }
 }
@@ -91,7 +88,6 @@ struct ExportClipSheet: View {
 
     @StateObject private var previewController = ExportPreviewController()
     @State private var captionText = ""
-    @State private var categoryText = ""
     @State private var isExporting = false
     @State private var exportErrorMessage: String?
     @State private var exportTask: Task<Void, Never>?
@@ -99,7 +95,6 @@ struct ExportClipSheet: View {
     init(
         request: ClipExportRequest,
         initialCaptionText: String,
-        initialCategoryText: String,
         onCancel: @escaping () -> Void,
         onExport: @escaping (DatasetRowInput) async throws -> Void
     ) {
@@ -107,7 +102,6 @@ struct ExportClipSheet: View {
         self.onCancel = onCancel
         self.onExport = onExport
         _captionText = State(initialValue: initialCaptionText)
-        _categoryText = State(initialValue: initialCategoryText)
     }
 
     private var isPreviewEnabled: Bool {
@@ -124,8 +118,6 @@ struct ExportClipSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     captionSection
-                    categorySection
-                    generatedSection
 
                     if isPreviewEnabled, let loadingErrorMessage = previewController.loadingErrorMessage {
                         Text("Preview error: \(loadingErrorMessage)")
@@ -208,35 +200,8 @@ struct ExportClipSheet: View {
             textEditor(
                 text: $captionText,
                 minHeight: 110,
-                placeholder: "Saved as the clip caption and reused for the synthetic negative"
+                placeholder: "Saved as the clip caption in dataset.json"
             )
-        }
-    }
-
-    private var categorySection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("Categories")
-            Text("Comma or newline separated. Each category generates one anchor.")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-            textEditor(
-                text: $categoryText,
-                minHeight: 72,
-                placeholder: "cat, studio"
-            )
-        }
-    }
-
-    private var generatedSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("Generated")
-            Text("This export automatically saves:")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-            generatedLine("Caption", "caption")
-            generatedLine("Categories", "[all provided categories]")
-            generatedLine("Negative", "synthetic, caption = caption, prompt = caption")
-            generatedLine("Anchors", "for each category: one anchor with [category]")
         }
     }
 
@@ -260,20 +225,6 @@ struct ExportClipSheet: View {
                 )
                 .keyboardShortcut(.defaultAction)
         }
-    }
-
-    private func generatedLine(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .font(.system(size: 12, weight: .medium))
-            Text(value)
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundStyle(.secondary)
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private func sectionTitle(_ title: String) -> some View {
@@ -350,30 +301,6 @@ struct ExportClipSheet: View {
             throw ExportFormError.blankCaption
         }
 
-        let categories = parseUniqueItems(from: categoryText)
-        guard !categories.isEmpty else {
-            throw ExportFormError.blankCategory
-        }
-
-        return DatasetRowInput(
-            caption: caption,
-            categories: categories
-        )
-    }
-
-    private func parseUniqueItems(from text: String) -> [String] {
-        let separators = CharacterSet(charactersIn: ",\n")
-        var values: [String] = []
-        var seen: Set<String> = []
-
-        for candidate in text.components(separatedBy: separators) {
-            let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { continue }
-            if seen.insert(trimmed).inserted {
-                values.append(trimmed)
-            }
-        }
-
-        return values
+        return DatasetRowInput(caption: caption)
     }
 }

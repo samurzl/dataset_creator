@@ -16,136 +16,69 @@ final class DatasetAuthoringTests: XCTestCase {
         }
     }
 
-    func testMissingNSyncOnAnyRowIsRejected() throws {
+    func testFlatRowsLoadSuccessfully() throws {
         let rootURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: rootURL) }
 
         let dataset: [Any] = [
-            rawRow(caption: "first", mediaPath: "positive/1.mp4"),
-            [
-                "caption": "second",
-                "media_path": "positive/2.mp4"
-            ]
+            rawFlatRow(caption: "first", mediaPath: "positive/1.mp4"),
+            rawFlatRow(caption: "second", mediaPath: "positive/2.png", extras: ["source_id": "abc123"])
         ]
         try writeJSONObject(dataset, to: rootURL.appendingPathComponent("dataset.json"))
 
-        let store = DatasetStore(datasetRootURL: rootURL)
-        XCTAssertThrowsError(try store.loadRows()) { error in
-            XCTAssertEqual(error as? DatasetStoreError, .missingNSync(row: 1))
-        }
+        let rows = try DatasetStore(datasetRootURL: rootURL).loadRows()
+        XCTAssertEqual(rows.map(\.caption), ["first", "second"])
+        XCTAssertEqual(rows.map(\.mediaPath), ["positive/1.mp4", "positive/2.png"])
+        XCTAssertEqual(rows[1].extras["source_id"], .string("abc123"))
     }
 
-    func testLegacyNegativeColumnsAreRejected() throws {
+    func testLegacyRowsLoadAndDiscardLegacyFieldsWithoutValidatingNSync() throws {
         let rootURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: rootURL) }
 
         let dataset: [Any] = [[
-            "caption": "first",
+            "caption": "legacy row",
             "media_path": "positive/1.mp4",
-            "negative_caption": "legacy",
-            "nsync": rawNSyncObject()
+            "source_id": "abc123",
+            "nsync": "definitely-not-an-object",
+            "negative_caption": "old negative",
+            "negative_media_path": "positive/old.mp4"
         ]]
         try writeJSONObject(dataset, to: rootURL.appendingPathComponent("dataset.json"))
 
-        let store = DatasetStore(datasetRootURL: rootURL)
-        XCTAssertThrowsError(try store.loadRows()) { error in
-            XCTAssertEqual(error as? DatasetStoreError, .legacyNegativeColumn(row: 0, key: "negative_caption"))
-        }
+        let rows = try DatasetStore(datasetRootURL: rootURL).loadRows()
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows[0].caption, "legacy row")
+        XCTAssertEqual(rows[0].mediaPath, "positive/1.mp4")
+        XCTAssertEqual(rows[0].extras["source_id"], .string("abc123"))
+        XCTAssertNil(rows[0].extras["nsync"])
+        XCTAssertNil(rows[0].extras["negative_caption"])
+        XCTAssertNil(rows[0].extras["negative_media_path"])
     }
 
-    func testCategoriesAndAnchorCategoriesAreDeduplicatedPreservingFirstOccurrence() throws {
+    func testBlankCaptionAndMediaPathAreRejected() throws {
         let rootURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: rootURL) }
 
-        let store = DatasetStore(datasetRootURL: rootURL)
-        let preparedAppend = try store.prepareAppend(
-            input: DatasetRowInput(
-                caption: "caption",
-                nsync: DatasetNSync(
-                    categories: ["cat", "studio", "cat", "cinematic", "studio"],
-                    negatives: [DatasetNegative(media: .positive, caption: "negative caption")],
-                    anchors: [
-                        DatasetAnchor(
-                            requiredCategories: ["studio", "cat", "studio", "cat", "cinematic"],
-                            extraRandomCategory: true
-                        )
-                    ]
-                )
-            )
-        )
-
-        XCTAssertEqual(preparedAppend.rows.count, 1)
-        XCTAssertEqual(preparedAppend.rows[0].nsync.categories, ["cat", "studio", "cinematic"])
-        XCTAssertEqual(preparedAppend.rows[0].nsync.anchors[0].requiredCategories, ["studio", "cat", "cinematic"])
-    }
-
-    func testQuickExportInputBuildsDerivedNSyncTemplate() {
-        let input = DatasetRowInput(
-            caption: "original caption",
-            categories: ["cat", "studio"]
-        )
-
-        XCTAssertEqual(input.caption, "original caption")
-        XCTAssertEqual(input.nsync.categories, ["cat", "studio"])
-        XCTAssertEqual(
-            input.nsync.negatives,
-            [
-                DatasetNegative(
-                    media: .synthetic,
-                    caption: "original caption",
-                    prompt: "original caption"
-                )
-            ]
-        )
-        XCTAssertEqual(
-            input.nsync.anchors,
-            [
-                DatasetAnchor(requiredCategories: ["cat"], extraRandomCategory: false),
-                DatasetAnchor(requiredCategories: ["studio"], extraRandomCategory: false)
-            ]
-        )
-    }
-
-    func testSyntheticPromptRequiredAndPositivePromptForbidden() throws {
-        let rootURL = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let datasetURL = rootURL.appendingPathComponent("dataset.json")
 
         try writeJSONObject(
-            [
-                rawRow(
-                    caption: "synthetic missing prompt",
-                    mediaPath: "positive/1.mp4",
-                    negatives: [[
-                        "media": "synthetic",
-                        "caption": "negative caption"
-                    ]]
-                )
-            ],
-            to: rootURL.appendingPathComponent("dataset.json")
+            [rawFlatRow(caption: "   ", mediaPath: "positive/1.mp4")],
+            to: datasetURL
         )
 
         let store = DatasetStore(datasetRootURL: rootURL)
         XCTAssertThrowsError(try store.loadRows()) { error in
-            XCTAssertEqual(error as? DatasetStoreError, .missingNegativePrompt(row: 0, index: 0))
+            XCTAssertEqual(error as? DatasetStoreError, .blankString(row: 0, key: "caption"))
         }
 
         try writeJSONObject(
-            [
-                rawRow(
-                    caption: "positive with prompt",
-                    mediaPath: "positive/1.mp4",
-                    negatives: [[
-                        "media": "positive",
-                        "caption": "negative caption",
-                        "prompt": "forbidden"
-                    ]]
-                )
-            ],
-            to: rootURL.appendingPathComponent("dataset.json")
+            [rawFlatRow(caption: "valid", mediaPath: "  \n")],
+            to: datasetURL
         )
 
         XCTAssertThrowsError(try store.loadRows()) { error in
-            XCTAssertEqual(error as? DatasetStoreError, .forbiddenNegativePrompt(row: 0, index: 0))
+            XCTAssertEqual(error as? DatasetStoreError, .blankString(row: 0, key: "media_path"))
         }
     }
 
@@ -154,8 +87,8 @@ final class DatasetAuthoringTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: rootURL) }
 
         let dataset: [Any] = [
-            rawRow(caption: "first", mediaPath: "positive/1.mp4"),
-            rawRow(caption: "second", mediaPath: "positive/1.mov")
+            rawFlatRow(caption: "first", mediaPath: "positive/1.mp4"),
+            rawFlatRow(caption: "second", mediaPath: "positive/1.mov")
         ]
         try writeJSONObject(dataset, to: rootURL.appendingPathComponent("dataset.json"))
 
@@ -165,7 +98,7 @@ final class DatasetAuthoringTests: XCTestCase {
         }
     }
 
-    func testAppendPreservesExistingRowsAndRewritesJSONArray() throws {
+    func testAppendMigratesLegacyRowsAndRewritesJSONArray() throws {
         let rootURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: rootURL) }
 
@@ -173,7 +106,9 @@ final class DatasetAuthoringTests: XCTestCase {
             "caption": "existing",
             "media_path": "positive/1.mp4",
             "source_id": "abc123",
-            "nsync": rawNSyncObject()
+            "nsync": rawNSyncObject(),
+            "negative_caption": "old negative",
+            "negative_media_path": "positive/old.mp4"
         ]]
         try writeJSONObject(dataset, to: rootURL.appendingPathComponent("dataset.json"))
 
@@ -186,11 +121,21 @@ final class DatasetAuthoringTests: XCTestCase {
         XCTAssertEqual(loadedRows[0].extras["source_id"], .string("abc123"))
         XCTAssertEqual(loadedRows[1].mediaPath, "positive/2.mp4")
 
-        let rawJSON = try JSONSerialization.jsonObject(with: Data(contentsOf: rootURL.appendingPathComponent("dataset.json")))
-        guard let rawArray = rawJSON as? [Any] else {
-            return XCTFail("dataset.json should remain a top-level array.")
+        let rawJSON = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: rootURL.appendingPathComponent("dataset.json"))
+        )
+        guard let rawArray = rawJSON as? [[String: Any]] else {
+            return XCTFail("dataset.json should remain a top-level array of objects.")
         }
+
         XCTAssertEqual(rawArray.count, 2)
+        XCTAssertNil(rawArray[0]["nsync"])
+        XCTAssertNil(rawArray[0]["negative_caption"])
+        XCTAssertNil(rawArray[0]["negative_media_path"])
+        XCTAssertEqual(rawArray[0]["source_id"] as? String, "abc123")
+        XCTAssertNil(rawArray[1]["nsync"])
+        XCTAssertEqual(rawArray[1]["caption"] as? String, "new row")
+        XCTAssertEqual(rawArray[1]["media_path"] as? String, "positive/2.mp4")
     }
 
     func testPrepareAppendUsesNextMixedMediaIndexAndRequestedExtension() throws {
@@ -203,7 +148,7 @@ final class DatasetAuthoringTests: XCTestCase {
         )
 
         let existingDataset: [Any] = [
-            rawRow(caption: "existing", mediaPath: "positive/2.mp4")
+            rawFlatRow(caption: "existing", mediaPath: "positive/2.mp4")
         ]
         try writeJSONObject(existingDataset, to: rootURL.appendingPathComponent("dataset.json"))
         try Data("image".utf8).write(to: rootURL.appendingPathComponent("positive/3.png"))
@@ -270,8 +215,7 @@ final class DatasetAuthoringTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: rootURL) }
 
         let invalidDataset: [Any] = [[
-            "caption": "invalid",
-            "media_path": "positive/1.mp4"
+            "caption": "invalid"
         ]]
         let datasetURL = rootURL.appendingPathComponent("dataset.json")
         try writeJSONObject(invalidDataset, to: datasetURL)
@@ -287,7 +231,7 @@ final class DatasetAuthoringTests: XCTestCase {
             )
             XCTFail("Expected export to fail when the existing dataset is invalid.")
         } catch {
-            XCTAssertEqual(error as? DatasetStoreError, .missingNSync(row: 0))
+            XCTAssertEqual(error as? DatasetStoreError, .missingString(row: 0, key: "media_path"))
         }
 
         XCTAssertEqual(try Data(contentsOf: datasetURL), originalData)
@@ -305,24 +249,28 @@ final class DatasetAuthoringTests: XCTestCase {
         try data.write(to: url)
     }
 
-    private func rawRow(
+    private func rawFlatRow(
         caption: String,
         mediaPath: String,
-        negatives: [[String: Any]]? = nil
+        extras: [String: Any] = [:]
     ) -> [String: Any] {
-        [
+        var row: [String: Any] = [
             "caption": caption,
-            "media_path": mediaPath,
-            "nsync": rawNSyncObject(negatives: negatives)
+            "media_path": mediaPath
         ]
+        for (key, value) in extras {
+            row[key] = value
+        }
+        return row
     }
 
-    private func rawNSyncObject(negatives: [[String: Any]]? = nil) -> [String: Any] {
+    private func rawNSyncObject() -> [String: Any] {
         [
             "categories": ["cat", "studio"],
-            "negatives": negatives ?? [[
-                "media": "positive",
-                "caption": "negative caption"
+            "negatives": [[
+                "media": "synthetic",
+                "caption": "negative caption",
+                "prompt": "negative prompt"
             ]],
             "anchors": [[
                 "required_categories": ["cat", "studio"]
@@ -331,14 +279,7 @@ final class DatasetAuthoringTests: XCTestCase {
     }
 
     private func sampleInput(caption: String) -> DatasetRowInput {
-        DatasetRowInput(
-            caption: caption,
-            nsync: DatasetNSync(
-                categories: ["cat", "studio"],
-                negatives: [DatasetNegative(media: .positive, caption: "negative caption")],
-                anchors: [DatasetAnchor(requiredCategories: ["cat"], extraRandomCategory: true)]
-            )
-        )
+        DatasetRowInput(caption: caption)
     }
 
     private func dummyRequest() -> ClipExportRequest {

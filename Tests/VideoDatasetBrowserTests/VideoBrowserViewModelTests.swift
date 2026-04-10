@@ -41,7 +41,7 @@ final class VideoBrowserViewModelTests: XCTestCase {
     }
 
     @MainActor
-    func testRememberLastExportPersistsCaptionAndCategories() throws {
+    func testRememberLastExportPersistsCaption() throws {
         let defaults = try makeIsolatedDefaults()
 
         defer {
@@ -54,14 +54,10 @@ final class VideoBrowserViewModelTests: XCTestCase {
         )
 
         viewModel.rememberLastExport(
-            input: DatasetRowInput(
-                caption: "a caption",
-                categories: ["cat", "studio"]
-            )
+            input: DatasetRowInput(caption: "a caption")
         )
 
         XCTAssertEqual(viewModel.lastExportCaption, "a caption")
-        XCTAssertEqual(viewModel.lastExportCategoryText, "cat\nstudio")
 
         let reloadedViewModel = VideoBrowserViewModel(
             defaults: defaults,
@@ -69,7 +65,6 @@ final class VideoBrowserViewModelTests: XCTestCase {
         )
 
         XCTAssertEqual(reloadedViewModel.lastExportCaption, "a caption")
-        XCTAssertEqual(reloadedViewModel.lastExportCategoryText, "cat\nstudio")
     }
 
     private var defaultsSuiteName: String {

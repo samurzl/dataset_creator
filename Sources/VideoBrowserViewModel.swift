@@ -26,12 +26,6 @@ final class VideoBrowserViewModel: ObservableObject {
         }
     }
 
-    @Published private(set) var lastExportCategoryText: String {
-        didSet {
-            defaults.set(lastExportCategoryText, forKey: Self.lastExportCategoryDefaultsKey)
-        }
-    }
-
     let playerController = VideoPlayerController()
     let imageCropController = ImageCropController()
 
@@ -47,7 +41,6 @@ final class VideoBrowserViewModel: ObservableObject {
     private static let inputFolderDefaultsKey = "inputFolderPath"
     private static let outputFolderDefaultsKey = "outputFolderPath"
     private static let lastExportCaptionDefaultsKey = "lastExportCaption"
-    private static let lastExportCategoryDefaultsKey = "lastExportCategoryText"
 
     private let supportedVideoExtensions: Set<String> = [
         "mp4",
@@ -86,7 +79,6 @@ final class VideoBrowserViewModel: ObservableObject {
         inputFolderPath = defaults.string(forKey: Self.inputFolderDefaultsKey) ?? ""
         outputFolderPath = defaults.string(forKey: Self.outputFolderDefaultsKey) ?? ""
         lastExportCaption = defaults.string(forKey: Self.lastExportCaptionDefaultsKey) ?? ""
-        lastExportCategoryText = defaults.string(forKey: Self.lastExportCategoryDefaultsKey) ?? ""
 
         playerController.objectWillChange
             .sink { [weak self] _ in
@@ -237,7 +229,6 @@ final class VideoBrowserViewModel: ObservableObject {
 
     func rememberLastExport(input: DatasetRowInput) {
         lastExportCaption = input.caption
-        lastExportCategoryText = input.nsync.categories.joined(separator: "\n")
     }
 
     func chooseInputFolder() {

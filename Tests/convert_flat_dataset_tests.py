@@ -35,7 +35,6 @@ class ConvertFlatDatasetTests(unittest.TestCase):
                     "scripts/convert_flat_dataset.py",
                     str(input_dir),
                     str(output_dir),
-                    "category",
                 ],
                 cwd=Path(__file__).resolve().parent.parent,
                 capture_output=True,
@@ -47,6 +46,7 @@ class ConvertFlatDatasetTests(unittest.TestCase):
             self.assertEqual(len(dataset), 1)
             self.assertEqual(dataset[0]["caption"], "valid caption")
             self.assertEqual(dataset[0]["media_path"], "positive/1.png")
+            self.assertNotIn("nsync", dataset[0])
             self.assertTrue((output_dir / "positive" / "1.png").exists())
             self.assertFalse((output_dir / "positive" / "2.png").exists())
             self.assertIn("warning: skipping unreadable media", result.stderr)
