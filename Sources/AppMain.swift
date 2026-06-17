@@ -175,7 +175,7 @@ struct ContentView: View {
         HStack(spacing: 14) {
             if viewModel.isShowingVideo {
                 Text("Selection: \(formattedSelectionDuration) s")
-                Text("Quantized frames (5, 9, 13, ...): \(viewModel.playerController.quantizedSelectedFrameCount)")
+                Text("Frames (\(ClipSelectionQuantization.allowedFrameCountsDescription)): \(viewModel.playerController.quantizedSelectedFrameCount)")
                 Text(viewModel.selectedVideoCropLabel)
             } else if viewModel.isShowingImage {
                 Text(viewModel.selectedImageCropLabel)

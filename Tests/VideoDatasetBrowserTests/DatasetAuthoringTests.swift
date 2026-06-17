@@ -286,7 +286,7 @@ final class DatasetAuthoringTests: XCTestCase {
         ClipExportRequest(
             videoURL: URL(fileURLWithPath: "/tmp/source.mp4"),
             inFrame: 0,
-            frameCount: 5,
+            frameCount: 9,
             frameRate: 16,
             aspectRatio: 1
         )

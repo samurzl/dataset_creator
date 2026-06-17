@@ -1,8 +1,12 @@
 import Foundation
 
 enum ClipSelectionQuantization {
-    static let minimumFrameCount = 5
-    static let step = 4
+    static let minimumFrameCount = 9
+    static let step = 8
+
+    static var allowedFrameCountsDescription: String {
+        "\(minimumFrameCount), \(minimumFrameCount + step), \(minimumFrameCount + (step * 2)), \(minimumFrameCount + (step * 3)), ..."
+    }
 
     static func isQuantized(_ frameCount: Int) -> Bool {
         guard frameCount >= minimumFrameCount else { return false }

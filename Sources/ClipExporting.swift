@@ -181,7 +181,7 @@ enum ClipExportError: LocalizedError {
         case .invalidFrameRate:
             return "The video frame rate is invalid."
         case .invalidFrameCount:
-            return "The selected clip length must follow 5, 9, 13, ... frames."
+            return "The selected clip length must be \(ClipSelectionQuantization.allowedFrameCountsDescription) frames."
         case .invalidImage:
             return "The selected image could not be loaded."
         case .invalidImageCrop:
@@ -236,7 +236,7 @@ enum ClipExporter {
 
     private static let pollingIntervalNanoseconds: UInt64 = 1_000_000
 
-    private struct AudioExportContext {
+    private struct AudioExportContext: @unchecked Sendable {
         let reader: AVAssetReader
         let output: AVAssetReaderTrackOutput
         let writerInput: AVAssetWriterInput
@@ -825,6 +825,12 @@ enum ClipExporter {
             }
         }
 
+        async let audioAppendTask: Void = appendAudioSamplesIfNeeded(
+            audioExportContext,
+            writer: writer,
+            timeoutSeconds: exportIdleTimeoutSeconds
+        )
+
         var lastSourceSampleBuffer = firstSourceSampleBuffer
 
         for frameOffset in 0..<request.frameCount {
@@ -882,16 +888,7 @@ enum ClipExporter {
         if reader.status == .reading {
             reader.cancelReading()
         }
-        if let audioExportContext {
-            try await appendAudioSamples(
-                from: audioExportContext.output,
-                reader: audioExportContext.reader,
-                to: audioExportContext.writerInput,
-                writer: writer,
-                timeoutSeconds: exportIdleTimeoutSeconds
-            )
-            audioExportContext.writerInput.markAsFinished()
-        }
+        try await audioAppendTask
         try await finishWriting(writer: writer, timeoutSeconds: exportIdleTimeoutSeconds)
 
         guard writer.status == .completed else {
@@ -1111,6 +1108,8 @@ enum ClipExporter {
         var deadline = OperationDeadline(timeoutSeconds: timeoutSeconds)
 
         while true {
+            try Task.checkCancellation()
+
             if let sampleBuffer = output.copyNextSampleBuffer() {
                 try await waitUntilReady(
                     for: input,
@@ -1145,6 +1144,23 @@ enum ClipExporter {
                 return
             }
         }
+    }
+
+    private static func appendAudioSamplesIfNeeded(
+        _ audioExportContext: AudioExportContext?,
+        writer: AVAssetWriter,
+        timeoutSeconds: Double
+    ) async throws {
+        guard let audioExportContext else { return }
+
+        try await appendAudioSamples(
+            from: audioExportContext.output,
+            reader: audioExportContext.reader,
+            to: audioExportContext.writerInput,
+            writer: writer,
+            timeoutSeconds: timeoutSeconds
+        )
+        audioExportContext.writerInput.markAsFinished()
     }
 
     private static func finishWriting(

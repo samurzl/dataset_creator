@@ -11,7 +11,7 @@ final class ClipExportingTests: XCTestCase {
         let request = ClipExportRequest(
             videoURL: URL(fileURLWithPath: "/tmp/source.mp4"),
             inFrame: 0,
-            frameCount: 5,
+            frameCount: 9,
             frameRate: 16,
             aspectRatio: 1
         )
@@ -29,7 +29,7 @@ final class ClipExportingTests: XCTestCase {
         let request = ClipExportRequest(
             videoURL: URL(fileURLWithPath: "/tmp/source.mp4"),
             inFrame: 0,
-            frameCount: 5,
+            frameCount: 9,
             frameRate: 16,
             aspectRatio: 1
         )
@@ -81,12 +81,41 @@ final class ClipExportingTests: XCTestCase {
         let request = ClipExportRequest(
             videoURL: sourceURL,
             inFrame: 0,
-            frameCount: 5,
+            frameCount: 9,
             frameRate: frameRate,
             aspectRatio: 1
         )
 
         _ = try await ClipExporter.exportClip(request: request, to: outputURL)
+
+        let exportedAsset = AVAsset(url: outputURL)
+        let audioTracks = try await exportedAsset.loadTracks(withMediaType: .audio)
+        XCTAssertEqual(audioTracks.count, 1)
+        XCTAssertTrue(assetContainsSamples(asset: exportedAsset, track: audioTracks[0]))
+    }
+
+    func testExportClipWritesMoreThanThirtyThreeFramesWhenSourceContainsAudio() async throws {
+        let rootURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let sourceURL = try await makeSyntheticVideoWithAudio(
+            in: rootURL,
+            durationSeconds: 3,
+            frameRate: 16
+        )
+        let outputURL = rootURL.appendingPathComponent("long-clip.mp4")
+        let request = ClipExportRequest(
+            videoURL: sourceURL,
+            inFrame: 0,
+            frameCount: 41,
+            frameRate: 16,
+            aspectRatio: 1
+        )
+
+        _ = try await ClipExporter.exportClip(request: request, to: outputURL)
+
+        let exportedFrameCount = try await countVideoFrames(in: outputURL)
+        XCTAssertEqual(exportedFrameCount, 41)
 
         let exportedAsset = AVAsset(url: outputURL)
         let audioTracks = try await exportedAsset.loadTracks(withMediaType: .audio)
@@ -130,7 +159,7 @@ final class ClipExportingTests: XCTestCase {
         let request = ClipExportRequest(
             videoURL: sourceURL,
             inFrame: 0,
-            frameCount: 5,
+            frameCount: 9,
             frameRate: 5,
             aspectRatio: 1,
             cropRect: CGRect(x: 0, y: 0, width: 32, height: 32)
@@ -176,6 +205,24 @@ final class ClipExportingTests: XCTestCase {
 
         let outputURL = rootURL.appendingPathComponent("source-with-audio.mov")
         try await muxVideoAndAudio(videoURL: silentVideoURL, audioURL: audioURL, outputURL: outputURL)
+        return outputURL
+    }
+
+    private func makeSyntheticVideoWithAudio(
+        in rootURL: URL,
+        durationSeconds: Double,
+        frameRate: Int
+    ) async throws -> URL {
+        let videoURL = try await makeQuadrantVideo(
+            in: rootURL,
+            durationSeconds: durationSeconds,
+            frameRate: frameRate
+        )
+        let audioURL = rootURL.appendingPathComponent("synthetic-tone.caf")
+        try writeToneAudio(to: audioURL, durationSeconds: durationSeconds)
+
+        let outputURL = rootURL.appendingPathComponent("synthetic-source-with-audio.mov")
+        try await muxVideoAndAudio(videoURL: videoURL, audioURL: audioURL, outputURL: outputURL)
         return outputURL
     }
 
@@ -303,7 +350,11 @@ final class ClipExportingTests: XCTestCase {
         try pngData.write(to: outputURL)
     }
 
-    private func makeQuadrantVideo(in rootURL: URL) async throws -> URL {
+    private func makeQuadrantVideo(
+        in rootURL: URL,
+        durationSeconds: Double = 1,
+        frameRate: Int = 5
+    ) async throws -> URL {
         let outputURL = rootURL.appendingPathComponent("quadrant.mov")
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
         let videoSize = 64
@@ -331,13 +382,14 @@ final class ClipExportingTests: XCTestCase {
         XCTAssertTrue(writer.startWriting())
         writer.startSession(atSourceTime: .zero)
 
-        for frameIndex in 0..<5 {
+        let frameCount = max(Int((durationSeconds * Double(frameRate)).rounded(.up)), 1)
+        for frameIndex in 0..<frameCount {
             while !input.isReadyForMoreMediaData {
                 try await Task.sleep(for: .milliseconds(1))
             }
 
             let pixelBuffer = try makeQuadrantPixelBuffer(width: videoSize, height: videoSize)
-            let presentationTime = CMTime(value: Int64(frameIndex), timescale: 5)
+            let presentationTime = CMTime(value: Int64(frameIndex), timescale: CMTimeScale(frameRate))
             XCTAssertTrue(adaptor.append(pixelBuffer, withPresentationTime: presentationTime))
         }
 
@@ -432,5 +484,39 @@ final class ClipExportingTests: XCTestCase {
         } catch {
             return false
         }
+    }
+
+    private func countVideoFrames(in videoURL: URL) async throws -> Int {
+        let asset = AVAsset(url: videoURL)
+        let tracks = try await asset.loadTracks(withMediaType: .video)
+        let track = try XCTUnwrap(tracks.first)
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(
+            track: track,
+            outputSettings: [
+                kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)
+            ]
+        )
+
+        guard reader.canAdd(output) else {
+            XCTFail("Failed to add video reader output.")
+            return 0
+        }
+        reader.add(output)
+
+        guard reader.startReading() else {
+            throw reader.error ?? ClipExportError.readerFailed(underlying: nil)
+        }
+
+        var frameCount = 0
+        while output.copyNextSampleBuffer() != nil {
+            frameCount += 1
+        }
+
+        guard reader.status == .completed else {
+            throw reader.error ?? ClipExportError.readerFailed(underlying: nil)
+        }
+
+        return frameCount
     }
 }
