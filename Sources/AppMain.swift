@@ -20,7 +20,7 @@ final class ExportWindowCoordinator: NSObject, ObservableObject, NSWindowDelegat
     func present(
         request: ClipExportRequest,
         initialCaption: String,
-        onExport: @escaping (DatasetRowInput) async throws -> Void
+        onExport: @escaping (ClipExportRequest, DatasetRowInput) async throws -> Void
     ) {
         close()
 
@@ -196,7 +196,7 @@ struct ContentView: View {
             Text("Select an input folder to load videos or images")
                 .font(.system(size: 18, weight: .semibold))
 
-            Text("Supported formats: mp4, mov, m4v, mkv, avi, mpg, mpeg, webm, png, jpg, jpeg, webp, heic, heif, bmp, tif, tiff, gif")
+            Text("Supported formats: mp4, mov, m4v, mkv, avi, mpg, mpeg, webm, gif, png, jpg, jpeg, webp, heic, heif, bmp, tif, tiff")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
 
@@ -273,8 +273,8 @@ struct ContentView: View {
             exportWindowCoordinator.present(
                 request: request,
                 initialCaption: viewModel.lastExportCaption
-            ) { input in
-                _ = try await viewModel.exportClip(request: request, input: input)
+            ) { exportRequest, input in
+                _ = try await viewModel.exportClip(request: exportRequest, input: input)
                 viewModel.rememberLastExport(input: input)
             }
         } catch {

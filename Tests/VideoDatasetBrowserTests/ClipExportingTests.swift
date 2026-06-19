@@ -7,6 +7,26 @@ import XCTest
 @testable import VideoDatasetBrowser
 
 final class ClipExportingTests: XCTestCase {
+    func testLoopedVideoRequestKeepsExportFrameCountInBuckets() {
+        let request = ClipExportRequest(
+            videoURL: URL(fileURLWithPath: "/tmp/source.mp4"),
+            inFrame: 0,
+            frameCount: 9,
+            frameRate: 16,
+            aspectRatio: 1,
+            loopCount: 3
+        )
+
+        XCTAssertEqual(request.sourceFrameCount, 9)
+        XCTAssertEqual(request.loopCount, 3)
+        XCTAssertEqual(request.frameCount, 25)
+        XCTAssertTrue(ClipSelectionQuantization.isQuantized(request.frameCount))
+        XCTAssertEqual(request.sourceFrameOffset(forExportFrameOffset: 0), 0)
+        XCTAssertEqual(request.sourceFrameOffset(forExportFrameOffset: 8), 8)
+        XCTAssertEqual(request.sourceFrameOffset(forExportFrameOffset: 9), 1)
+        XCTAssertEqual(request.sourceFrameOffset(forExportFrameOffset: 24), 8)
+    }
+
     func testIdleTimeoutHasGenerousFloorForShortClips() {
         let request = ClipExportRequest(
             videoURL: URL(fileURLWithPath: "/tmp/source.mp4"),
@@ -123,6 +143,35 @@ final class ClipExportingTests: XCTestCase {
         XCTAssertTrue(assetContainsSamples(asset: exportedAsset, track: audioTracks[0]))
     }
 
+    func testExportVideoLoopsSelectedClipWhileKeepingFrameBucket() async throws {
+        let rootURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let sourceURL = try await makeColorSequenceVideo(
+            in: rootURL,
+            frameCount: 9,
+            frameRate: 5
+        )
+        let outputURL = rootURL.appendingPathComponent("looped-clip.mp4")
+        let request = ClipExportRequest(
+            videoURL: sourceURL,
+            inFrame: 0,
+            frameCount: 9,
+            frameRate: 5,
+            aspectRatio: 1,
+            loopCount: 2
+        )
+
+        _ = try await ClipExporter.exportClip(request: request, to: outputURL)
+
+        let frameColors = try await centerColorsByFrame(in: outputURL)
+        XCTAssertEqual(frameColors.count, 17)
+
+        XCTAssertColor(frameColors[8], approximatelyEquals: frameColors[16])
+        XCTAssertColor(frameColors[1], approximatelyEquals: frameColors[9])
+        XCTAssertColor(frameColors[0], differsFrom: frameColors[9])
+    }
+
     func testExportImageWritesPNGForSelectedCrop() async throws {
         let rootURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: rootURL) }
@@ -191,6 +240,12 @@ final class ClipExportingTests: XCTestCase {
         return url
     }
 
+    private struct PixelColor {
+        let red: UInt8
+        let green: UInt8
+        let blue: UInt8
+    }
+
     private func repositoryRootURL() -> URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -224,6 +279,128 @@ final class ClipExportingTests: XCTestCase {
         let outputURL = rootURL.appendingPathComponent("synthetic-source-with-audio.mov")
         try await muxVideoAndAudio(videoURL: videoURL, audioURL: audioURL, outputURL: outputURL)
         return outputURL
+    }
+
+    private func makeColorSequenceVideo(
+        in rootURL: URL,
+        frameCount: Int,
+        frameRate: Int
+    ) async throws -> URL {
+        let outputURL = rootURL.appendingPathComponent("color-sequence.mov")
+        let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
+        let videoSize = 32
+        let videoSettings: [String: Any] = [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: videoSize,
+            AVVideoHeightKey: videoSize
+        ]
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
+        input.expectsMediaDataInRealTime = false
+
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: input,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA),
+                kCVPixelBufferWidthKey as String: videoSize,
+                kCVPixelBufferHeightKey as String: videoSize,
+                kCVPixelBufferCGImageCompatibilityKey as String: true,
+                kCVPixelBufferCGBitmapContextCompatibilityKey as String: true
+            ]
+        )
+
+        XCTAssertTrue(writer.canAdd(input))
+        writer.add(input)
+        XCTAssertTrue(writer.startWriting())
+        writer.startSession(atSourceTime: .zero)
+
+        for frameIndex in 0..<frameCount {
+            while !input.isReadyForMoreMediaData {
+                try await Task.sleep(for: .milliseconds(1))
+            }
+
+            let pixelBuffer = try makeSolidPixelBuffer(
+                width: videoSize,
+                height: videoSize,
+                color: colorForFrame(frameIndex)
+            )
+            let presentationTime = CMTime(value: Int64(frameIndex), timescale: CMTimeScale(frameRate))
+            XCTAssertTrue(adaptor.append(pixelBuffer, withPresentationTime: presentationTime))
+        }
+
+        input.markAsFinished()
+
+        await withCheckedContinuation { continuation in
+            writer.finishWriting {
+                continuation.resume()
+            }
+        }
+
+        if let error = writer.error {
+            throw error
+        }
+        XCTAssertEqual(writer.status, .completed)
+        return outputURL
+    }
+
+    private func colorForFrame(_ frameIndex: Int) -> PixelColor {
+        let colors = [
+            PixelColor(red: 235, green: 24, blue: 40),
+            PixelColor(red: 30, green: 210, blue: 60),
+            PixelColor(red: 45, green: 75, blue: 235),
+            PixelColor(red: 230, green: 210, blue: 35),
+            PixelColor(red: 220, green: 45, blue: 215),
+            PixelColor(red: 40, green: 220, blue: 220),
+            PixelColor(red: 240, green: 240, blue: 240),
+            PixelColor(red: 115, green: 115, blue: 115),
+            PixelColor(red: 240, green: 125, blue: 35)
+        ]
+
+        return colors[frameIndex % colors.count]
+    }
+
+    private func makeSolidPixelBuffer(
+        width: Int,
+        height: Int,
+        color: PixelColor
+    ) throws -> CVPixelBuffer {
+        var maybeBuffer: CVPixelBuffer?
+        let status = CVPixelBufferCreate(
+            nil,
+            width,
+            height,
+            kCVPixelFormatType_32BGRA,
+            [
+                kCVPixelBufferCGImageCompatibilityKey: true,
+                kCVPixelBufferCGBitmapContextCompatibilityKey: true
+            ] as CFDictionary,
+            &maybeBuffer
+        )
+
+        guard status == kCVReturnSuccess, let pixelBuffer = maybeBuffer else {
+            throw XCTSkip("Failed to create test pixel buffer.")
+        }
+
+        CVPixelBufferLockBaseAddress(pixelBuffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
+
+        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else {
+            throw XCTSkip("Missing test pixel buffer base address.")
+        }
+
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+        for y in 0..<height {
+            let row = baseAddress.advanced(by: y * bytesPerRow)
+            for x in 0..<width {
+                let pixel = row.advanced(by: x * 4)
+                let bytes = pixel.assumingMemoryBound(to: UInt8.self)
+                bytes[0] = color.blue
+                bytes[1] = color.green
+                bytes[2] = color.red
+                bytes[3] = 255
+            }
+        }
+
+        return pixelBuffer
     }
 
     private func writeToneAudio(to outputURL: URL, durationSeconds: Double) throws {
@@ -484,6 +661,86 @@ final class ClipExportingTests: XCTestCase {
         } catch {
             return false
         }
+    }
+
+    private func centerColorsByFrame(in videoURL: URL) async throws -> [PixelColor] {
+        let asset = AVAsset(url: videoURL)
+        let tracks = try await asset.loadTracks(withMediaType: .video)
+        let track = try XCTUnwrap(tracks.first)
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(
+            track: track,
+            outputSettings: [
+                kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)
+            ]
+        )
+
+        guard reader.canAdd(output) else {
+            XCTFail("Failed to add video reader output.")
+            return []
+        }
+        reader.add(output)
+
+        guard reader.startReading() else {
+            throw reader.error ?? ClipExportError.readerFailed(underlying: nil)
+        }
+
+        var frameColors: [PixelColor] = []
+        while let sampleBuffer = output.copyNextSampleBuffer() {
+            guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+                continue
+            }
+            frameColors.append(try centerColor(from: pixelBuffer))
+        }
+
+        guard reader.status == .completed else {
+            throw reader.error ?? ClipExportError.readerFailed(underlying: nil)
+        }
+
+        return frameColors
+    }
+
+    private func centerColor(from pixelBuffer: CVPixelBuffer) throws -> PixelColor {
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+
+        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else {
+            throw XCTSkip("Missing decoded frame base address.")
+        }
+
+        let centerX = CVPixelBufferGetWidth(pixelBuffer) / 2
+        let centerY = CVPixelBufferGetHeight(pixelBuffer) / 2
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+        let pixel = baseAddress
+            .advanced(by: centerY * bytesPerRow)
+            .advanced(by: centerX * 4)
+        let bytes = pixel.assumingMemoryBound(to: UInt8.self)
+
+        return PixelColor(red: bytes[2], green: bytes[1], blue: bytes[0])
+    }
+
+    private func XCTAssertColor(
+        _ color: PixelColor,
+        approximatelyEquals expected: PixelColor,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertLessThanOrEqual(colorDistance(color, expected), 80, file: file, line: line)
+    }
+
+    private func XCTAssertColor(
+        _ color: PixelColor,
+        differsFrom expected: PixelColor,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertGreaterThan(colorDistance(color, expected), 120, file: file, line: line)
+    }
+
+    private func colorDistance(_ lhs: PixelColor, _ rhs: PixelColor) -> Int {
+        abs(Int(lhs.red) - Int(rhs.red)) +
+            abs(Int(lhs.green) - Int(rhs.green)) +
+            abs(Int(lhs.blue) - Int(rhs.blue))
     }
 
     private func countVideoFrames(in videoURL: URL) async throws -> Int {

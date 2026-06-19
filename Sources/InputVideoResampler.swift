@@ -1,11 +1,15 @@
 import AVFoundation
+import CoreGraphics
 import Foundation
+import ImageIO
 
 protocol InputVideoPreparing: Sendable {
     func preparedURL(for sourceURL: URL) async throws -> URL
 }
 
 enum InputVideoResampleError: LocalizedError {
+    case invalidGIF
+    case invalidGIFFrame(index: Int)
     case missingVideoTrack
     case failedToCreateReader
     case failedToCreateWriterInput
@@ -20,6 +24,10 @@ enum InputVideoResampleError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .invalidGIF:
+            return "The GIF animation could not be loaded."
+        case let .invalidGIFFrame(index):
+            return "GIF frame \(index) could not be decoded."
         case .missingVideoTrack:
             return "No video track found in the source file."
         case .failedToCreateReader:
@@ -49,6 +57,23 @@ enum InputVideoResampleError: LocalizedError {
 actor InputVideoResampler {
     static let defaultTargetFrameRate = 16
     private static let pollingIntervalNanoseconds: UInt64 = 1_000_000
+
+    private struct GIFFrame: @unchecked Sendable {
+        let image: CGImage
+        let startSeconds: Double
+        let durationSeconds: Double
+
+        var endSeconds: Double {
+            startSeconds + durationSeconds
+        }
+    }
+
+    private struct GIFAnimation: @unchecked Sendable {
+        let frames: [GIFFrame]
+        let pixelWidth: Int
+        let pixelHeight: Int
+        let durationSeconds: Double
+    }
 
     private final class FinishWritingState: @unchecked Sendable {
         private let lock = NSLock()
@@ -151,6 +176,15 @@ actor InputVideoResampler {
         to outputURL: URL,
         targetFrameRate: Int
     ) async throws {
+        if isGIF(sourceURL) {
+            try await writeGIFVideo(
+                from: sourceURL,
+                to: outputURL,
+                targetFrameRate: max(targetFrameRate, 1)
+            )
+            return
+        }
+
         let fileManager = FileManager.default
         try? fileManager.removeItem(at: outputURL)
 
@@ -187,6 +221,261 @@ actor InputVideoResampler {
             withResampledVideoAt: intermediateVideoURL,
             to: outputURL
         )
+    }
+
+    private static func isGIF(_ url: URL) -> Bool {
+        url.pathExtension.lowercased() == "gif"
+    }
+
+    private static func writeGIFVideo(
+        from sourceURL: URL,
+        to outputURL: URL,
+        targetFrameRate: Int
+    ) async throws {
+        let fileManager = FileManager.default
+        try? fileManager.removeItem(at: outputURL)
+
+        let animation = try decodeGIFAnimation(from: sourceURL)
+        let renderWidth = normalizedVideoDimension(animation.pixelWidth)
+        let renderHeight = normalizedVideoDimension(animation.pixelHeight)
+        let outputFrameCount = max(
+            Int((animation.durationSeconds * Double(targetFrameRate)).rounded(.up)),
+            ClipSelectionQuantization.minimumFrameCount
+        )
+        let outputDurationSeconds = Double(outputFrameCount) / Double(targetFrameRate)
+        let timeoutSeconds = min(max(outputDurationSeconds * 12, 60), 1_800)
+
+        let writer: AVAssetWriter
+        do {
+            writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
+        } catch {
+            throw InputVideoResampleError.writerFailed(underlying: error)
+        }
+
+        let compressionSettings: [String: Any] = [
+            AVVideoAverageBitRateKey: max(renderWidth * renderHeight * 8, 2_000_000),
+            AVVideoProfileLevelKey: AVVideoProfileLevelH264BaselineAutoLevel,
+            AVVideoExpectedSourceFrameRateKey: targetFrameRate,
+            AVVideoAllowFrameReorderingKey: false,
+            AVVideoMaxKeyFrameIntervalKey: max(targetFrameRate, 1),
+            AVVideoMaxKeyFrameIntervalDurationKey: 1
+        ]
+        let outputSettings: [String: Any] = [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: renderWidth,
+            AVVideoHeightKey: renderHeight,
+            AVVideoCompressionPropertiesKey: compressionSettings
+        ]
+
+        let writerInput = AVAssetWriterInput(mediaType: .video, outputSettings: outputSettings)
+        writerInput.expectsMediaDataInRealTime = false
+        writerInput.performsMultiPassEncodingIfSupported = false
+        writerInput.mediaTimeScale = 60_000
+
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: writerInput,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA),
+                kCVPixelBufferWidthKey as String: renderWidth,
+                kCVPixelBufferHeightKey as String: renderHeight,
+                kCVPixelBufferCGImageCompatibilityKey as String: true,
+                kCVPixelBufferCGBitmapContextCompatibilityKey as String: true
+            ]
+        )
+
+        guard writer.canAdd(writerInput) else {
+            throw InputVideoResampleError.failedToCreateWriterInput
+        }
+        writer.add(writerInput)
+
+        guard writer.startWriting() else {
+            throw InputVideoResampleError.writerFailed(underlying: writer.error)
+        }
+        writer.startSession(atSourceTime: .zero)
+
+        guard let pixelBufferPool = adaptor.pixelBufferPool else {
+            throw InputVideoResampleError.failedToCreatePixelBuffer
+        }
+
+        defer {
+            if writer.status == .writing {
+                writer.cancelWriting()
+            }
+        }
+
+        for frameIndex in 0..<outputFrameCount {
+            try await waitUntilReady(
+                for: writerInput,
+                writer: writer,
+                timeoutSeconds: timeoutSeconds,
+                stage: "waiting for the GIF video encoder"
+            )
+
+            let presentationTime = CMTime(
+                value: Int64(frameIndex),
+                timescale: Int32(targetFrameRate)
+            )
+            let frame = gifFrame(
+                for: Double(frameIndex) / Double(targetFrameRate),
+                in: animation
+            )
+            let pixelBuffer = try makePixelBuffer(
+                from: frame.image,
+                pool: pixelBufferPool,
+                width: renderWidth,
+                height: renderHeight
+            )
+
+            guard adaptor.append(pixelBuffer, withPresentationTime: presentationTime) else {
+                throw InputVideoResampleError.writerFailed(underlying: writer.error)
+            }
+        }
+
+        writerInput.markAsFinished()
+        try await finishWriting(writer: writer, timeoutSeconds: timeoutSeconds)
+
+        guard writer.status == .completed else {
+            throw InputVideoResampleError.writerFailed(underlying: writer.error)
+        }
+    }
+
+    private static func decodeGIFAnimation(from url: URL) throws -> GIFAnimation {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+            throw InputVideoResampleError.invalidGIF
+        }
+
+        let frameCount = CGImageSourceGetCount(source)
+        guard frameCount > 0 else {
+            throw InputVideoResampleError.invalidGIF
+        }
+
+        var frames: [GIFFrame] = []
+        frames.reserveCapacity(frameCount)
+        var elapsedSeconds: Double = 0
+
+        for frameIndex in 0..<frameCount {
+            guard let image = CGImageSourceCreateImageAtIndex(source, frameIndex, nil) else {
+                throw InputVideoResampleError.invalidGIFFrame(index: frameIndex)
+            }
+
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, frameIndex, nil) as? [String: Any]
+            let durationSeconds = gifFrameDuration(from: properties)
+            frames.append(
+                GIFFrame(
+                    image: image,
+                    startSeconds: elapsedSeconds,
+                    durationSeconds: durationSeconds
+                )
+            )
+            elapsedSeconds += durationSeconds
+        }
+
+        guard let firstFrame = frames.first, elapsedSeconds > 0 else {
+            throw InputVideoResampleError.invalidGIF
+        }
+
+        let sourceProperties = CGImageSourceCopyProperties(source, nil) as? [String: Any]
+        let pixelWidth = (
+            sourceProperties?[kCGImagePropertyPixelWidth as String] as? NSNumber
+        )?.intValue ?? firstFrame.image.width
+        let pixelHeight = (
+            sourceProperties?[kCGImagePropertyPixelHeight as String] as? NSNumber
+        )?.intValue ?? firstFrame.image.height
+
+        guard pixelWidth > 0, pixelHeight > 0 else {
+            throw InputVideoResampleError.invalidGIF
+        }
+
+        return GIFAnimation(
+            frames: frames,
+            pixelWidth: pixelWidth,
+            pixelHeight: pixelHeight,
+            durationSeconds: elapsedSeconds
+        )
+    }
+
+    private static func gifFrameDuration(from properties: [String: Any]?) -> Double {
+        let gifProperties = properties?[kCGImagePropertyGIFDictionary as String] as? [String: Any]
+        let unclampedDelay = (
+            gifProperties?[kCGImagePropertyGIFUnclampedDelayTime as String] as? NSNumber
+        )?.doubleValue
+        let clampedDelay = (
+            gifProperties?[kCGImagePropertyGIFDelayTime as String] as? NSNumber
+        )?.doubleValue
+        let delay = unclampedDelay ?? clampedDelay ?? 0.1
+
+        guard delay.isFinite, delay > 0 else {
+            return 0.1
+        }
+        return max(delay, 0.02)
+    }
+
+    private static func normalizedVideoDimension(_ dimension: Int) -> Int {
+        let boundedDimension = max(dimension, 2)
+        return boundedDimension.isMultiple(of: 2) ? boundedDimension : boundedDimension + 1
+    }
+
+    private static func gifFrame(
+        for timeSeconds: Double,
+        in animation: GIFAnimation
+    ) -> GIFFrame {
+        let loopTime = animation.durationSeconds > 0
+            ? timeSeconds.truncatingRemainder(dividingBy: animation.durationSeconds)
+            : 0
+
+        for frame in animation.frames where loopTime < frame.endSeconds {
+            return frame
+        }
+
+        return animation.frames[animation.frames.count - 1]
+    }
+
+    private static func makePixelBuffer(
+        from image: CGImage,
+        pool: CVPixelBufferPool,
+        width: Int,
+        height: Int
+    ) throws -> CVPixelBuffer {
+        var maybeBuffer: CVPixelBuffer?
+        let status = CVPixelBufferPoolCreatePixelBuffer(nil, pool, &maybeBuffer)
+
+        guard status == kCVReturnSuccess, let pixelBuffer = maybeBuffer else {
+            throw InputVideoResampleError.failedToCreatePixelBuffer
+        }
+
+        CVPixelBufferLockBaseAddress(pixelBuffer, [])
+        defer {
+            CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
+        }
+
+        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else {
+            throw InputVideoResampleError.failedToCreatePixelBuffer
+        }
+
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue |
+            CGImageAlphaInfo.premultipliedFirst.rawValue
+        guard let context = CGContext(
+            data: baseAddress,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: CVPixelBufferGetBytesPerRow(pixelBuffer),
+            space: colorSpace,
+            bitmapInfo: bitmapInfo
+        ) else {
+            throw InputVideoResampleError.failedToCreatePixelBuffer
+        }
+
+        let rect = CGRect(x: 0, y: 0, width: width, height: height)
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
+        context.fill(rect)
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: 1, y: -1)
+        context.interpolationQuality = .none
+        context.draw(image, in: rect)
+
+        return pixelBuffer
     }
 
     private static func writeResampledVideoTrack(

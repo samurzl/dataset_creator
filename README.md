@@ -11,7 +11,7 @@ Native macOS GUI app to browse videos and images from an input folder, trim or c
 - Large media preview that fills most of the window.
 - Playback timeline scrubber for videos and drag-to-crop selection for both videos and images.
 - Navigation controls to move through media in the folder.
-- Export selected videos into `positive/<n>.mp4`, preserving source audio when present.
+- Export selected videos and GIFs into `positive/<n>.mp4`, with 1x, 2x, or 3x loop options and source audio preserved when present.
 - Export cropped images into `positive/<n>.png`.
 - Append validated flat rows to `dataset.json`.
 - Author a caption for each exported row from the export sheet.
@@ -69,9 +69,9 @@ If Pillow is installed, unreadable image files are skipped with a warning and ar
 
 ## Supported media formats
 
-Videos: `mp4`, `mov`, `m4v`, `mkv`, `avi`, `mpg`, `mpeg`, `webm`
+Videos/GIFs: `mp4`, `mov`, `m4v`, `mkv`, `avi`, `mpg`, `mpeg`, `webm`, `gif`
 
-Images: `png`, `jpg`, `jpeg`, `webp`, `heic`, `heif`, `bmp`, `tif`, `tiff`, `gif`
+Images: `png`, `jpg`, `jpeg`, `webp`, `heic`, `heif`, `bmp`, `tif`, `tiff`
 
 ## Run in development
 

@@ -9,9 +9,17 @@ struct ClipExportRequest: Identifiable {
     struct VideoSelection {
         let videoURL: URL
         let inFrame: Int
-        let frameCount: Int
+        let sourceFrameCount: Int
+        let loopCount: Int
         let frameRate: Double
         let cropRect: CGRect?
+
+        var frameCount: Int {
+            ClipExportRequest.exportedFrameCount(
+                sourceFrameCount: sourceFrameCount,
+                loopCount: loopCount
+            )
+        }
     }
 
     struct ImageSelection {
@@ -35,14 +43,16 @@ struct ClipExportRequest: Identifiable {
         frameCount: Int,
         frameRate: Double,
         aspectRatio: CGFloat,
-        cropRect: CGRect? = nil
+        cropRect: CGRect? = nil,
+        loopCount: Int = 1
     ) {
         let resolvedCropRect = cropRect?.standardized
         source = .video(
             VideoSelection(
                 videoURL: videoURL,
                 inFrame: inFrame,
-                frameCount: frameCount,
+                sourceFrameCount: frameCount,
+                loopCount: Self.resolvedLoopCount(loopCount),
                 frameRate: frameRate,
                 cropRect: resolvedCropRect
             )
@@ -114,6 +124,11 @@ struct ClipExportRequest: Identifiable {
         return Double(videoSelection.inFrame) / videoSelection.frameRate
     }
 
+    var sourceDurationSeconds: Double {
+        guard let videoSelection else { return 0 }
+        return Double(videoSelection.sourceFrameCount) / videoSelection.frameRate
+    }
+
     var durationSeconds: Double {
         guard let videoSelection else { return 0 }
         return Double(videoSelection.frameCount) / videoSelection.frameRate
@@ -140,6 +155,18 @@ struct ClipExportRequest: Identifiable {
         return videoSelection.frameCount
     }
 
+    var sourceFrameCount: Int {
+        guard let videoSelection else {
+            preconditionFailure("Attempted to read a video source frame count from an image export request.")
+        }
+        return videoSelection.sourceFrameCount
+    }
+
+    var loopCount: Int {
+        guard let videoSelection else { return 1 }
+        return videoSelection.loopCount
+    }
+
     var frameRate: Double {
         guard let videoSelection else {
             preconditionFailure("Attempted to read a video frame rate from an image export request.")
@@ -150,6 +177,41 @@ struct ClipExportRequest: Identifiable {
     var videoCropRect: CGRect? {
         guard let videoSelection else { return nil }
         return videoSelection.cropRect
+    }
+
+    func withVideoLoopCount(_ loopCount: Int) -> ClipExportRequest {
+        guard let videoSelection else { return self }
+
+        return ClipExportRequest(
+            videoURL: videoSelection.videoURL,
+            inFrame: videoSelection.inFrame,
+            frameCount: videoSelection.sourceFrameCount,
+            frameRate: videoSelection.frameRate,
+            aspectRatio: aspectRatio,
+            cropRect: videoSelection.cropRect,
+            loopCount: loopCount
+        )
+    }
+
+    func sourceFrameOffset(forExportFrameOffset frameOffset: Int) -> Int {
+        let boundedSourceFrameCount = max(sourceFrameCount, 1)
+        guard boundedSourceFrameCount > 1 else { return 0 }
+        guard loopCount > 1, frameOffset > 0 else {
+            return min(max(frameOffset, 0), boundedSourceFrameCount - 1)
+        }
+
+        return 1 + ((frameOffset - 1) % (boundedSourceFrameCount - 1))
+    }
+
+    static func exportedFrameCount(sourceFrameCount: Int, loopCount: Int) -> Int {
+        let boundedSourceFrameCount = max(sourceFrameCount, 0)
+        guard boundedSourceFrameCount > 1 else { return boundedSourceFrameCount }
+
+        return 1 + ((boundedSourceFrameCount - 1) * resolvedLoopCount(loopCount))
+    }
+
+    private static func resolvedLoopCount(_ loopCount: Int) -> Int {
+        min(max(loopCount, 1), 3)
     }
 }
 
@@ -234,6 +296,11 @@ enum ClipExporter {
         let writerTransform: CGAffineTransform
     }
 
+    private struct LoopedSourceTimeRange {
+        let sourceTimeRange: CMTimeRange
+        let targetStart: CMTime
+    }
+
     private static let pollingIntervalNanoseconds: UInt64 = 1_000_000
 
     private struct AudioExportContext: @unchecked Sendable {
@@ -282,15 +349,14 @@ enum ClipExporter {
             throw ClipExportError.invalidSourceRange
         }
 
-        let safeDuration = min(request.durationSeconds, max(durationSeconds - startSeconds, 0))
-        guard safeDuration > 0 else {
+        let availableDurationSeconds = max(durationSeconds - startSeconds, 0)
+        let loopedTimeRanges = loopedSourceTimeRanges(
+            for: request,
+            availableDurationSeconds: availableDurationSeconds
+        )
+        guard !loopedTimeRanges.isEmpty else {
             throw ClipExportError.invalidSourceRange
         }
-
-        let timeRange = CMTimeRange(
-            start: CMTime(seconds: startSeconds, preferredTimescale: 60_000),
-            duration: CMTime(seconds: safeDuration, preferredTimescale: 60_000)
-        )
 
         let composition = AVMutableComposition()
         let videoTracks = try await asset.loadTracks(withMediaType: .video)
@@ -305,7 +371,13 @@ enum ClipExporter {
             throw ClipExportError.failedToCreateCompositionTrack
         }
 
-        try compositionVideoTrack.insertTimeRange(timeRange, of: sourceVideoTrack, at: .zero)
+        for timeRange in loopedTimeRanges {
+            try compositionVideoTrack.insertTimeRange(
+                timeRange.sourceTimeRange,
+                of: sourceVideoTrack,
+                at: timeRange.targetStart
+            )
+        }
 
         let audioTracks = try await asset.loadTracks(withMediaType: .audio)
         if let sourceAudioTrack = audioTracks.first,
@@ -313,12 +385,18 @@ enum ClipExporter {
                withMediaType: .audio,
                preferredTrackID: kCMPersistentTrackID_Invalid
            ) {
-            try? compositionAudioTrack.insertTimeRange(timeRange, of: sourceAudioTrack, at: .zero)
+            for timeRange in loopedTimeRanges {
+                try? compositionAudioTrack.insertTimeRange(
+                    timeRange.sourceTimeRange,
+                    of: sourceAudioTrack,
+                    at: timeRange.targetStart
+                )
+            }
         }
 
         let playerItem = AVPlayerItem(asset: composition)
         if let cropRect = request.videoCropRect {
-            let previewTimeRange = CMTimeRange(start: .zero, duration: timeRange.duration)
+            let previewTimeRange = CMTimeRange(start: .zero, duration: composition.duration)
             playerItem.videoComposition = try await makeVideoComposition(
                 for: compositionVideoTrack,
                 timeRange: previewTimeRange,
@@ -362,7 +440,8 @@ enum ClipExporter {
             throw ClipExportError.invalidFrameRate
         }
 
-        guard ClipSelectionQuantization.isQuantized(request.frameCount) else {
+        guard ClipSelectionQuantization.isQuantized(request.sourceFrameCount),
+              ClipSelectionQuantization.isQuantized(request.frameCount) else {
             throw ClipExportError.invalidFrameCount
         }
 
@@ -593,6 +672,67 @@ enum ClipExporter {
         )
     }
 
+    private static func loopedSourceTimeRanges(
+        for request: ClipExportRequest,
+        availableDurationSeconds: Double
+    ) -> [LoopedSourceTimeRange] {
+        guard request.isVideo,
+              request.frameRate > 0,
+              availableDurationSeconds > 0 else {
+            return []
+        }
+
+        let timescale: CMTimeScale = 60_000
+        let sourceStartSeconds = request.startSeconds
+        let sourceDurationSeconds = min(request.sourceDurationSeconds, availableDurationSeconds)
+        guard sourceDurationSeconds > 0 else { return [] }
+
+        func timeRange(
+            sourceOffsetSeconds: Double,
+            durationSeconds: Double,
+            targetStartSeconds: Double
+        ) -> LoopedSourceTimeRange {
+            LoopedSourceTimeRange(
+                sourceTimeRange: CMTimeRange(
+                    start: CMTime(seconds: sourceStartSeconds + sourceOffsetSeconds, preferredTimescale: timescale),
+                    duration: CMTime(seconds: durationSeconds, preferredTimescale: timescale)
+                ),
+                targetStart: CMTime(seconds: targetStartSeconds, preferredTimescale: timescale)
+            )
+        }
+
+        var ranges = [
+            timeRange(
+                sourceOffsetSeconds: 0,
+                durationSeconds: sourceDurationSeconds,
+                targetStartSeconds: 0
+            )
+        ]
+
+        let repeatedSourceOffsetSeconds = min(1 / request.frameRate, sourceDurationSeconds)
+        let repeatedDurationSeconds = min(
+            max(request.sourceDurationSeconds - repeatedSourceOffsetSeconds, 0),
+            max(availableDurationSeconds - repeatedSourceOffsetSeconds, 0)
+        )
+        guard request.loopCount > 1, repeatedDurationSeconds > 0 else {
+            return ranges
+        }
+
+        var targetStartSeconds = sourceDurationSeconds
+        for _ in 1..<request.loopCount {
+            ranges.append(
+                timeRange(
+                    sourceOffsetSeconds: repeatedSourceOffsetSeconds,
+                    durationSeconds: repeatedDurationSeconds,
+                    targetStartSeconds: targetStartSeconds
+                )
+            )
+            targetStartSeconds += repeatedDurationSeconds
+        }
+
+        return ranges
+    }
+
     private static func writeClipWithTimingFallback(
         request: ClipExportRequest,
         to outputURL: URL,
@@ -671,11 +811,10 @@ enum ClipExporter {
         guard availableDurationSeconds > 0 else {
             throw ClipExportError.invalidSourceRange
         }
-        let safeVideoDurationSeconds = min(request.durationSeconds, availableDurationSeconds)
+        let safeVideoDurationSeconds = min(request.sourceDurationSeconds, availableDurationSeconds)
         guard safeVideoDurationSeconds > 0 else {
             throw ClipExportError.invalidSourceRange
         }
-        let safeAudioDurationSeconds = min(request.durationSeconds, availableDurationSeconds)
 
         let reader = try AVAssetReader(asset: sourceAsset)
         let sourceTimeRange = CMTimeRange(
@@ -713,6 +852,24 @@ enum ClipExporter {
         ),
               let firstSourceBuffer = CMSampleBufferGetImageBuffer(firstSourceSampleBuffer) else {
             throw ClipExportError.frameExtractionFailed(frameIndex: request.inFrame)
+        }
+
+        var sourceSampleBuffers = [firstSourceSampleBuffer]
+        var lastSourceSampleBuffer = firstSourceSampleBuffer
+
+        for _ in 1..<request.sourceFrameCount {
+            if let nextDecodedSampleBuffer = try await readNextDecodedSampleBuffer(
+                output: readerOutput,
+                reader: reader,
+                timeoutSeconds: exportIdleTimeoutSeconds,
+                stage: "reading source video frames"
+            ) {
+                sourceSampleBuffers.append(nextDecodedSampleBuffer)
+                lastSourceSampleBuffer = nextDecodedSampleBuffer
+            } else {
+                // If the source provides fewer decodable frames than requested, pad with the last frame.
+                sourceSampleBuffers.append(lastSourceSampleBuffer)
+            }
         }
 
         let renderWidth = max(CVPixelBufferGetWidth(firstSourceBuffer), 1)
@@ -779,8 +936,8 @@ enum ClipExporter {
         )
         let audioExportContext = try await makeAudioExportContext(
             sourceAsset: sourceAsset,
-            startSeconds: startSeconds,
-            durationSeconds: safeAudioDurationSeconds
+            request: request,
+            availableDurationSeconds: availableDurationSeconds
         )
 
         guard writer.canAdd(writerInput) else {
@@ -831,8 +988,6 @@ enum ClipExporter {
             timeoutSeconds: exportIdleTimeoutSeconds
         )
 
-        var lastSourceSampleBuffer = firstSourceSampleBuffer
-
         for frameOffset in 0..<request.frameCount {
             try await waitUntilReady(
                 for: writerInput,
@@ -841,24 +996,13 @@ enum ClipExporter {
                 stage: "waiting for the video encoder"
             )
 
-            let sourceSampleBuffer: CMSampleBuffer
-            if frameOffset == 0 {
-                sourceSampleBuffer = firstSourceSampleBuffer
-            } else if let nextDecodedSampleBuffer = try await readNextDecodedSampleBuffer(
-                output: readerOutput,
-                reader: reader,
-                timeoutSeconds: exportIdleTimeoutSeconds,
-                stage: "reading source video frames"
-            ) {
-                sourceSampleBuffer = nextDecodedSampleBuffer
-                lastSourceSampleBuffer = nextDecodedSampleBuffer
-            } else {
-                // If the source provides fewer decodable frames than requested, pad with the last frame.
-                sourceSampleBuffer = lastSourceSampleBuffer
-            }
+            let sourceFrameOffset = request.sourceFrameOffset(forExportFrameOffset: frameOffset)
+            let sourceSampleBuffer = sourceSampleBuffers[
+                min(max(sourceFrameOffset, 0), sourceSampleBuffers.count - 1)
+            ]
 
             guard let sourceBuffer = CMSampleBufferGetImageBuffer(sourceSampleBuffer) else {
-                throw ClipExportError.frameExtractionFailed(frameIndex: request.inFrame + frameOffset)
+                throw ClipExportError.frameExtractionFailed(frameIndex: request.inFrame + sourceFrameOffset)
             }
 
             let pixelBuffer = try clonePixelBuffer(
@@ -1025,10 +1169,14 @@ enum ClipExporter {
 
     private static func makeAudioExportContext(
         sourceAsset: AVAsset,
-        startSeconds: Double,
-        durationSeconds: Double
+        request: ClipExportRequest,
+        availableDurationSeconds: Double
     ) async throws -> AudioExportContext? {
-        guard durationSeconds > 0 else {
+        let loopedTimeRanges = loopedSourceTimeRanges(
+            for: request,
+            availableDurationSeconds: availableDurationSeconds
+        )
+        guard !loopedTimeRanges.isEmpty else {
             return nil
         }
 
@@ -1045,11 +1193,13 @@ enum ClipExporter {
             throw ClipExportError.failedToCreateCompositionTrack
         }
 
-        let timeRange = CMTimeRange(
-            start: CMTime(seconds: startSeconds, preferredTimescale: 60_000),
-            duration: CMTime(seconds: durationSeconds, preferredTimescale: 60_000)
-        )
-        try compositionAudioTrack.insertTimeRange(timeRange, of: sourceAudioTrack, at: .zero)
+        for timeRange in loopedTimeRanges {
+            try compositionAudioTrack.insertTimeRange(
+                timeRange.sourceTimeRange,
+                of: sourceAudioTrack,
+                at: timeRange.targetStart
+            )
+        }
 
         let compositionAudioTracks = try await composition.loadTracks(withMediaType: .audio)
         guard let trimmedAudioTrack = compositionAudioTracks.first else {

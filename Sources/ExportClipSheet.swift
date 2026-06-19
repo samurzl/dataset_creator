@@ -81,13 +81,28 @@ private enum ExportFormError: LocalizedError {
     }
 }
 
+private enum ExportLoopCount: Int, CaseIterable, Identifiable {
+    case once = 1
+    case twice = 2
+    case threeTimes = 3
+
+    var id: Int {
+        rawValue
+    }
+
+    var label: String {
+        "\(rawValue)x"
+    }
+}
+
 struct ExportClipSheet: View {
     let request: ClipExportRequest
     let onCancel: () -> Void
-    let onExport: (DatasetRowInput) async throws -> Void
+    let onExport: (ClipExportRequest, DatasetRowInput) async throws -> Void
 
     @StateObject private var previewController = ExportPreviewController()
     @State private var captionText = ""
+    @State private var selectedLoopCount: ExportLoopCount = .once
     @State private var isExporting = false
     @State private var exportErrorMessage: String?
     @State private var exportTask: Task<Void, Never>?
@@ -96,16 +111,23 @@ struct ExportClipSheet: View {
         request: ClipExportRequest,
         initialCaptionText: String,
         onCancel: @escaping () -> Void,
-        onExport: @escaping (DatasetRowInput) async throws -> Void
+        onExport: @escaping (ClipExportRequest, DatasetRowInput) async throws -> Void
     ) {
         self.request = request
         self.onCancel = onCancel
         self.onExport = onExport
         _captionText = State(initialValue: initialCaptionText)
+        _selectedLoopCount = State(
+            initialValue: ExportLoopCount(rawValue: request.loopCount) ?? .once
+        )
     }
 
     private var isPreviewEnabled: Bool {
         request.isImage || !RuntimeEnvironment.shouldDisableExportPreview
+    }
+
+    private var exportRequest: ClipExportRequest {
+        request.withVideoLoopCount(selectedLoopCount.rawValue)
     }
 
     var body: some View {
@@ -117,6 +139,10 @@ struct ExportClipSheet: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    if request.isVideo {
+                        loopSection
+                    }
+
                     captionSection
 
                     if isPreviewEnabled, let loadingErrorMessage = previewController.loadingErrorMessage {
@@ -139,9 +165,9 @@ struct ExportClipSheet: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .task(id: request.id) {
+        .task(id: selectedLoopCount) {
             guard isPreviewEnabled else { return }
-            await previewController.load(request: request)
+            await previewController.load(request: exportRequest)
         }
         .onDisappear {
             exportTask?.cancel()
@@ -191,6 +217,21 @@ struct ExportClipSheet: View {
                 .background(Color.secondary.opacity(0.1))
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
+        }
+    }
+
+    private var loopSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionTitle("Loop")
+            Picker("Loop", selection: $selectedLoopCount) {
+                ForEach(ExportLoopCount.allCases) { loopCount in
+                    Text(loopCount.label)
+                        .tag(loopCount)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .disabled(isExporting)
         }
     }
 
@@ -264,13 +305,14 @@ struct ExportClipSheet: View {
 
         do {
             let input = try buildDatasetRowInput()
+            let requestToExport = exportRequest
             exportErrorMessage = nil
             isExporting = true
 
             exportTask?.cancel()
             exportTask = Task(priority: .userInitiated) {
                 do {
-                    try await onExport(input)
+                    try await onExport(requestToExport, input)
 
                     await MainActor.run {
                         isExporting = false

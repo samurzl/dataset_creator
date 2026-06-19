@@ -41,6 +41,41 @@ final class VideoBrowserViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testRefreshTreatsGIFsAsPreparedVideos() async throws {
+        let inputRootURL = try makeTemporaryDirectory()
+        let defaults = try makeIsolatedDefaults()
+        let videoPreparer = RecordingVideoPreparer()
+
+        defer {
+            try? FileManager.default.removeItem(at: inputRootURL)
+            defaults.removePersistentDomain(forName: defaultsSuiteName)
+        }
+
+        let gifURL = inputRootURL.appendingPathComponent("animated.gif")
+        try Data("gif fixture".utf8).write(to: gifURL)
+
+        let viewModel = VideoBrowserViewModel(
+            defaults: defaults,
+            inputVideoResampler: videoPreparer
+        )
+        viewModel.inputFolderPath = inputRootURL.path
+        viewModel.refreshVideos()
+
+        try await waitUntil(timeout: 1.0) {
+            await videoPreparer.requestedSourceURLs().count == 1
+        }
+
+        XCTAssertEqual(viewModel.mediaItems.count, 1)
+        XCTAssertEqual(viewModel.mediaItems.first?.sourceURL.lastPathComponent, "animated.gif")
+        XCTAssertEqual(viewModel.mediaItems.first?.kind, .video)
+        XCTAssertTrue(viewModel.isShowingVideo)
+        XCTAssertFalse(viewModel.isShowingImage)
+
+        let preparedNames = await videoPreparer.requestedSourceURLs().map(\.lastPathComponent)
+        XCTAssertEqual(preparedNames, ["animated.gif"])
+    }
+
+    @MainActor
     func testRememberLastExportPersistsCaption() throws {
         let defaults = try makeIsolatedDefaults()
 

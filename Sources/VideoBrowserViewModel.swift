@@ -50,7 +50,8 @@ final class VideoBrowserViewModel: ObservableObject {
         "avi",
         "mpg",
         "mpeg",
-        "webm"
+        "webm",
+        "gif"
     ]
 
     private let supportedImageExtensions: Set<String> = [
@@ -62,8 +63,7 @@ final class VideoBrowserViewModel: ObservableObject {
         "heif",
         "bmp",
         "tif",
-        "tiff",
-        "gif"
+        "tiff"
     ]
 
     private let preloadLookaheadCount = 2
