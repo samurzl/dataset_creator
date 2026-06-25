@@ -1,0 +1,416 @@
+:root {
+  color-scheme: dark;
+  --bg: #141516;
+  --panel: #202327;
+  --panel-strong: #292d32;
+  --line: #3a4148;
+  --line-soft: #2f353b;
+  --text: #f2f4f5;
+  --muted: #9da8b2;
+  --accent: #61c8a8;
+  --accent-strong: #35a784;
+  --warning: #d5a24c;
+  --danger: #e06b6b;
+  --focus: #93d7ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #252a2f;
+  color: var(--text);
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--focus);
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #17191b;
+  color: var(--text);
+  padding: 8px 9px;
+  outline: none;
+}
+
+textarea {
+  min-height: 132px;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--focus);
+}
+
+label span,
+.field-row > span,
+.section-heading {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.sidebar {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+  border-right: 1px solid var(--line-soft);
+  background: #191b1e;
+  padding: 14px;
+}
+
+.brand-row,
+.top-bar,
+.media-header,
+.field-row,
+.toggle-row,
+.nav-actions,
+.control-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-row,
+.top-bar,
+.media-header {
+  justify-content: space-between;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 18px;
+  font-weight: 750;
+}
+
+h2 {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 18px;
+  font-weight: 720;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#connectionStatus,
+#selectedMeta,
+.message-line {
+  min-height: 18px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.icon-button {
+  width: 34px;
+  padding: 0;
+}
+
+.primary-button {
+  border-color: color-mix(in srgb, var(--accent), white 8%);
+  background: var(--accent-strong);
+  color: #06150f;
+  font-weight: 750;
+}
+
+.settings-block,
+.panel {
+  display: grid;
+  gap: 9px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 11px;
+}
+
+.settings-block label {
+  display: grid;
+  gap: 5px;
+}
+
+.compact-settings {
+  gap: 8px;
+}
+
+.media-header {
+  padding-top: 2px;
+}
+
+.media-list {
+  display: grid;
+  min-height: 180px;
+  align-content: start;
+  gap: 6px;
+  overflow: auto;
+}
+
+.media-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  min-height: 42px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #1f2226;
+  padding: 8px;
+  text-align: left;
+}
+
+.media-item.active {
+  border-color: var(--accent);
+  background: #21312d;
+}
+
+.media-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-kind,
+.job-status {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.workbench {
+  display: grid;
+  grid-template-columns: minmax(420px, 1fr) 380px;
+  min-width: 0;
+  min-height: 100vh;
+}
+
+.preview-pane {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+
+.export-pane {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+  border-left: 1px solid var(--line-soft);
+  background: #181a1d;
+  padding: 14px;
+  overflow: auto;
+}
+
+.media-frame {
+  position: relative;
+  display: grid;
+  width: 100%;
+  min-height: 260px;
+  max-height: calc(100vh - 230px);
+  flex: 1 1 auto;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0d0f10;
+  aspect-ratio: 16 / 9;
+}
+
+.media-frame video,
+.media-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.empty-preview {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.crop-overlay {
+  position: absolute;
+  border: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent), transparent 78%);
+  pointer-events: none;
+}
+
+.control-strip {
+  min-height: 42px;
+  flex-wrap: wrap;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 8px 10px;
+}
+
+.range-control {
+  display: grid;
+  grid-template-columns: auto minmax(180px, 1fr) 48px;
+  align-items: center;
+  gap: 10px;
+  min-width: min(100%, 440px);
+  flex: 1;
+}
+
+.range-control input {
+  padding: 0;
+}
+
+output,
+#cropLabel {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.segmented {
+  display: grid;
+  grid-auto-columns: 1fr;
+  grid-auto-flow: column;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+.segmented button {
+  min-width: 64px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.segmented button.active {
+  background: var(--accent);
+  color: #06150f;
+  font-weight: 750;
+}
+
+.field-row {
+  justify-content: space-between;
+}
+
+.toggle-row {
+  justify-content: flex-start;
+}
+
+.toggle-row input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.job-list,
+.dataset-list {
+  display: grid;
+  max-height: 260px;
+  gap: 7px;
+  overflow: auto;
+}
+
+.job-item,
+.dataset-row {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #1d2024;
+  padding: 8px;
+}
+
+.job-title,
+.dataset-path {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.job-detail,
+.dataset-caption {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.status-running {
+  color: var(--warning);
+}
+
+.status-done {
+  color: var(--accent);
+}
+
+.status-failed {
+  color: var(--danger);
+}
+
+@media (max-width: 1100px) {
+  .app-shell,
+  .workbench {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar,
+  .export-pane {
+    border: 0;
+  }
+
+  .media-list {
+    max-height: 220px;
+  }
+
+  .media-frame {
+    max-height: 58vh;
+  }
+}
+

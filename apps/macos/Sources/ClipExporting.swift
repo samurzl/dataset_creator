@@ -11,6 +11,7 @@ struct ClipExportRequest: Identifiable {
         let inFrame: Int
         let sourceFrameCount: Int
         let loopCount: Int
+        let includesAudio: Bool
         let frameRate: Double
         let cropRect: CGRect?
 
@@ -44,7 +45,8 @@ struct ClipExportRequest: Identifiable {
         frameRate: Double,
         aspectRatio: CGFloat,
         cropRect: CGRect? = nil,
-        loopCount: Int = 1
+        loopCount: Int = 1,
+        includesAudio: Bool = true
     ) {
         let resolvedCropRect = cropRect?.standardized
         source = .video(
@@ -53,6 +55,7 @@ struct ClipExportRequest: Identifiable {
                 inFrame: inFrame,
                 sourceFrameCount: frameCount,
                 loopCount: Self.resolvedLoopCount(loopCount),
+                includesAudio: includesAudio,
                 frameRate: frameRate,
                 cropRect: resolvedCropRect
             )
@@ -167,6 +170,11 @@ struct ClipExportRequest: Identifiable {
         return videoSelection.loopCount
     }
 
+    var includesAudio: Bool {
+        guard let videoSelection else { return false }
+        return videoSelection.includesAudio
+    }
+
     var frameRate: Double {
         guard let videoSelection else {
             preconditionFailure("Attempted to read a video frame rate from an image export request.")
@@ -189,7 +197,23 @@ struct ClipExportRequest: Identifiable {
             frameRate: videoSelection.frameRate,
             aspectRatio: aspectRatio,
             cropRect: videoSelection.cropRect,
-            loopCount: loopCount
+            loopCount: loopCount,
+            includesAudio: videoSelection.includesAudio
+        )
+    }
+
+    func withAudioEnabled(_ includesAudio: Bool) -> ClipExportRequest {
+        guard let videoSelection else { return self }
+
+        return ClipExportRequest(
+            videoURL: videoSelection.videoURL,
+            inFrame: videoSelection.inFrame,
+            frameCount: videoSelection.sourceFrameCount,
+            frameRate: videoSelection.frameRate,
+            aspectRatio: aspectRatio,
+            cropRect: videoSelection.cropRect,
+            loopCount: videoSelection.loopCount,
+            includesAudio: includesAudio
         )
     }
 
@@ -379,18 +403,20 @@ enum ClipExporter {
             )
         }
 
-        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
-        if let sourceAudioTrack = audioTracks.first,
-           let compositionAudioTrack = composition.addMutableTrack(
-               withMediaType: .audio,
-               preferredTrackID: kCMPersistentTrackID_Invalid
-           ) {
-            for timeRange in loopedTimeRanges {
-                try? compositionAudioTrack.insertTimeRange(
-                    timeRange.sourceTimeRange,
-                    of: sourceAudioTrack,
-                    at: timeRange.targetStart
-                )
+        if request.includesAudio {
+            let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+            if let sourceAudioTrack = audioTracks.first,
+               let compositionAudioTrack = composition.addMutableTrack(
+                   withMediaType: .audio,
+                   preferredTrackID: kCMPersistentTrackID_Invalid
+               ) {
+                for timeRange in loopedTimeRanges {
+                    try? compositionAudioTrack.insertTimeRange(
+                        timeRange.sourceTimeRange,
+                        of: sourceAudioTrack,
+                        at: timeRange.targetStart
+                    )
+                }
             }
         }
 
@@ -937,7 +963,8 @@ enum ClipExporter {
         let audioExportContext = try await makeAudioExportContext(
             sourceAsset: sourceAsset,
             request: request,
-            availableDurationSeconds: availableDurationSeconds
+            availableDurationSeconds: availableDurationSeconds,
+            timeoutSeconds: exportIdleTimeoutSeconds
         )
 
         guard writer.canAdd(writerInput) else {
@@ -1024,6 +1051,9 @@ enum ClipExporter {
                 )
             }
             guard adaptor.append(pixelBuffer, withPresentationTime: presentationTime) else {
+                if writer.status == .failed {
+                    throw ClipExportError.writerFailed(underlying: writer.error)
+                }
                 throw ClipExportError.writerAppendFailed
             }
         }
@@ -1170,8 +1200,13 @@ enum ClipExporter {
     private static func makeAudioExportContext(
         sourceAsset: AVAsset,
         request: ClipExportRequest,
-        availableDurationSeconds: Double
+        availableDurationSeconds: Double,
+        timeoutSeconds: Double
     ) async throws -> AudioExportContext? {
+        guard request.includesAudio else {
+            return nil
+        }
+
         let loopedTimeRanges = loopedSourceTimeRanges(
             for: request,
             availableDurationSeconds: availableDurationSeconds
@@ -1206,15 +1241,25 @@ enum ClipExporter {
             return nil
         }
 
-        let reader = try AVAssetReader(asset: composition)
-        let outputSettings: [String: Any] = [
+        let audioOutputSettings: [String: Any] = [
             AVFormatIDKey: kAudioFormatLinearPCM,
             AVLinearPCMBitDepthKey: 16,
             AVLinearPCMIsBigEndianKey: false,
             AVLinearPCMIsFloatKey: false,
             AVLinearPCMIsNonInterleaved: false
         ]
-        let output = AVAssetReaderTrackOutput(track: trimmedAudioTrack, outputSettings: outputSettings)
+        let decodedFormatDescription = try await firstDecodedAudioFormatDescription(
+            in: composition,
+            track: trimmedAudioTrack,
+            outputSettings: audioOutputSettings,
+            timeoutSeconds: timeoutSeconds
+        )
+        guard let decodedFormatDescription else {
+            return nil
+        }
+
+        let reader = try AVAssetReader(asset: composition)
+        let output = AVAssetReaderTrackOutput(track: trimmedAudioTrack, outputSettings: audioOutputSettings)
         output.alwaysCopiesSampleData = false
 
         guard reader.canAdd(output) else {
@@ -1224,20 +1269,70 @@ enum ClipExporter {
 
         let writerInput = AVAssetWriterInput(
             mediaType: .audio,
-            outputSettings: try await makeAudioOutputSettings(for: sourceAudioTrack)
+            outputSettings: try await makeAudioOutputSettings(
+                for: sourceAudioTrack,
+                decodedFormatDescription: decodedFormatDescription
+            )
         )
         writerInput.expectsMediaDataInRealTime = false
 
         return AudioExportContext(reader: reader, output: output, writerInput: writerInput)
     }
 
-    private static func makeAudioOutputSettings(for sourceAudioTrack: AVAssetTrack) async throws -> [String: Any] {
+    private static func firstDecodedAudioFormatDescription(
+        in asset: AVAsset,
+        track: AVAssetTrack,
+        outputSettings: [String: Any],
+        timeoutSeconds: Double
+    ) async throws -> CMAudioFormatDescription? {
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: outputSettings)
+        output.alwaysCopiesSampleData = false
+
+        guard reader.canAdd(output) else {
+            throw ClipExportError.readerFailed(underlying: reader.error)
+        }
+        reader.add(output)
+
+        guard reader.startReading() else {
+            throw ClipExportError.readerFailed(underlying: reader.error)
+        }
+        defer {
+            if reader.status == .reading {
+                reader.cancelReading()
+            }
+        }
+
+        guard let sampleBuffer = try await readNextSampleBuffer(
+            output: output,
+            reader: reader,
+            timeoutSeconds: timeoutSeconds,
+            stage: "reading source audio format"
+        ) else {
+            return nil
+        }
+
+        return CMSampleBufferGetFormatDescription(sampleBuffer)
+    }
+
+    private static func makeAudioOutputSettings(
+        for sourceAudioTrack: AVAssetTrack,
+        decodedFormatDescription: CMAudioFormatDescription
+    ) async throws -> [String: Any] {
+        let decodedBasicDescription = CMAudioFormatDescriptionGetStreamBasicDescription(decodedFormatDescription)?.pointee
+        let decodedAudioFormat = AVAudioFormat(cmAudioFormatDescription: decodedFormatDescription)
         let formatDescriptions = try await sourceAudioTrack.load(.formatDescriptions)
-        let audioFormat = formatDescriptions.lazy.compactMap { description in
+        let sourceAudioFormat = formatDescriptions.lazy.map { description in
             AVAudioFormat(cmAudioFormatDescription: description)
         }.first
-        let sampleRate = audioFormat?.sampleRate ?? 44_100
-        let channelCount = max(Int(audioFormat?.channelCount ?? 2), 1)
+        let sampleRate = validSampleRate(decodedAudioFormat.sampleRate)
+            ?? validSampleRate(decodedBasicDescription?.mSampleRate)
+            ?? validSampleRate(sourceAudioFormat?.sampleRate)
+            ?? 44_100
+        let channelCount = validChannelCount(decodedAudioFormat.channelCount)
+            ?? validChannelCount(decodedBasicDescription?.mChannelsPerFrame)
+            ?? validChannelCount(sourceAudioFormat?.channelCount)
+            ?? 2
         let bitRate = min(max(channelCount * 96_000, 64_000), 320_000)
 
         return [
@@ -1246,6 +1341,51 @@ enum ClipExporter {
             AVNumberOfChannelsKey: channelCount,
             AVEncoderBitRateKey: bitRate
         ]
+    }
+
+    private static func validSampleRate(_ sampleRate: Double?) -> Double? {
+        guard let sampleRate, sampleRate.isFinite, sampleRate > 0 else {
+            return nil
+        }
+        return sampleRate
+    }
+
+    private static func validChannelCount(_ channelCount: AVAudioChannelCount?) -> Int? {
+        guard let channelCount, channelCount > 0 else {
+            return nil
+        }
+        return Int(channelCount)
+    }
+
+    private static func readNextSampleBuffer(
+        output: AVAssetReaderOutput,
+        reader: AVAssetReader,
+        timeoutSeconds: Double,
+        stage: String
+    ) async throws -> CMSampleBuffer? {
+        let deadline = OperationDeadline(timeoutSeconds: timeoutSeconds)
+
+        while true {
+            if let sampleBuffer = output.copyNextSampleBuffer() {
+                return sampleBuffer
+            }
+
+            switch reader.status {
+            case .completed, .cancelled:
+                return nil
+            case .failed:
+                throw ClipExportError.readerFailed(underlying: reader.error)
+            case .reading, .unknown:
+                if deadline.hasExpired() {
+                    reader.cancelReading()
+                    throw ClipExportError.timedOut(stage: stage)
+                }
+                try Task.checkCancellation()
+                try await Task.sleep(nanoseconds: pollingIntervalNanoseconds)
+            @unknown default:
+                return nil
+            }
+        }
     }
 
     private static func appendAudioSamples(

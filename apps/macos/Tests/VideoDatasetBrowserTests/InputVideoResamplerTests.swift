@@ -9,7 +9,7 @@ import XCTest
 
 final class InputVideoResamplerTests: XCTestCase {
     func testPreparedURLResamplesVideoToDefaultFrameRate() async throws {
-        let sourceURL = repositoryRootURL().appendingPathComponent("example_dataset/positive/1.mp4")
+        let sourceURL = exampleDatasetURL().appendingPathComponent("positive/1.mp4")
         let resampler = InputVideoResampler()
 
         let preparedURL = try await resampler.preparedURL(for: sourceURL)
@@ -90,6 +90,12 @@ final class InputVideoResamplerTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+    }
+
+    private func exampleDatasetURL() -> URL {
+        repositoryRootURL().appendingPathComponent("examples/example_dataset")
     }
 
     private func makeTemporaryDirectory() throws -> URL {
@@ -243,7 +249,7 @@ final class InputVideoResamplerTests: XCTestCase {
     }
 
     private func makeVideoWithAudio(in rootURL: URL) async throws -> URL {
-        let silentVideoURL = repositoryRootURL().appendingPathComponent("example_dataset/positive/1.mp4")
+        let silentVideoURL = exampleDatasetURL().appendingPathComponent("positive/1.mp4")
         let audioURL = rootURL.appendingPathComponent("tone.caf")
         try writeToneAudio(to: audioURL, durationSeconds: 1)
 

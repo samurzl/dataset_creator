@@ -114,6 +114,68 @@ final class ClipExportingTests: XCTestCase {
         XCTAssertTrue(assetContainsSamples(asset: exportedAsset, track: audioTracks[0]))
     }
 
+    func testExportClipHandlesAudioFirstHEAACv2Source() async throws {
+        let rootURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let sourceURL = try await makeAudioFirstHEAACv2Video(in: rootURL)
+        let sourceAsset = AVAsset(url: sourceURL)
+        let videoTracks = try await sourceAsset.loadTracks(withMediaType: .video)
+        let sourceVideoTrack = try XCTUnwrap(videoTracks.first)
+        let frameRate = Double(try await sourceVideoTrack.load(.nominalFrameRate))
+        XCTAssertGreaterThan(frameRate, 0)
+
+        let outputURL = rootURL.appendingPathComponent("he-aacv2-clip.mp4")
+        let request = ClipExportRequest(
+            videoURL: sourceURL,
+            inFrame: 0,
+            frameCount: 9,
+            frameRate: frameRate,
+            aspectRatio: 9 / 16
+        )
+
+        _ = try await ClipExporter.exportClip(request: request, to: outputURL)
+
+        let exportedFrameCount = try await countVideoFrames(in: outputURL)
+        XCTAssertEqual(exportedFrameCount, 9)
+
+        let exportedAsset = AVAsset(url: outputURL)
+        let audioTracks = try await exportedAsset.loadTracks(withMediaType: .audio)
+        XCTAssertEqual(audioTracks.count, 1)
+        XCTAssertTrue(assetContainsSamples(asset: exportedAsset, track: audioTracks[0]))
+    }
+
+    func testExportClipCanOmitAudioWhenSourceContainsAudio() async throws {
+        let rootURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let sourceURL = try await makeVideoWithAudio(in: rootURL)
+        let sourceAsset = AVAsset(url: sourceURL)
+        let videoTracks = try await sourceAsset.loadTracks(withMediaType: .video)
+        let sourceVideoTrack = try XCTUnwrap(videoTracks.first)
+        let frameRate = Double(try await sourceVideoTrack.load(.nominalFrameRate))
+        XCTAssertGreaterThan(frameRate, 0)
+
+        let outputURL = rootURL.appendingPathComponent("clip-without-audio.mp4")
+        let request = ClipExportRequest(
+            videoURL: sourceURL,
+            inFrame: 0,
+            frameCount: 9,
+            frameRate: frameRate,
+            aspectRatio: 1,
+            includesAudio: false
+        )
+
+        _ = try await ClipExporter.exportClip(request: request, to: outputURL)
+
+        let exportedAsset = AVAsset(url: outputURL)
+        let audioTracks = try await exportedAsset.loadTracks(withMediaType: .audio)
+        let exportedFrameCount = try await countVideoFrames(in: outputURL)
+
+        XCTAssertEqual(audioTracks.count, 0)
+        XCTAssertEqual(exportedFrameCount, 9)
+    }
+
     func testExportClipWritesMoreThanThirtyThreeFramesWhenSourceContainsAudio() async throws {
         let rootURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: rootURL) }
@@ -251,10 +313,16 @@ final class ClipExportingTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+    }
+
+    private func exampleDatasetURL() -> URL {
+        repositoryRootURL().appendingPathComponent("examples/example_dataset")
     }
 
     private func makeVideoWithAudio(in rootURL: URL) async throws -> URL {
-        let silentVideoURL = repositoryRootURL().appendingPathComponent("example_dataset/positive/1.mp4")
+        let silentVideoURL = exampleDatasetURL().appendingPathComponent("positive/1.mp4")
         let audioURL = rootURL.appendingPathComponent("tone.caf")
         try writeToneAudio(to: audioURL, durationSeconds: 1)
 
@@ -281,18 +349,48 @@ final class ClipExportingTests: XCTestCase {
         return outputURL
     }
 
+    private func makeAudioFirstHEAACv2Video(in rootURL: URL) async throws -> URL {
+        let videoURL = try await makeColorSequenceVideo(
+            in: rootURL,
+            frameCount: 45,
+            frameRate: 30,
+            width: 576,
+            height: 1_024
+        )
+        let pcmAudioURL = rootURL.appendingPathComponent("stereo-tone.caf")
+        try writeToneAudio(to: pcmAudioURL, durationSeconds: 2, channelCount: 2)
+
+        let heAACAudioURL = rootURL.appendingPathComponent("he-aacv2.m4a")
+        try runProcess(
+            executableURL: URL(fileURLWithPath: "/usr/bin/afconvert"),
+            arguments: [
+                "-f", "m4af",
+                "-d", "aacp",
+                "-b", "32000",
+                "-c", "2",
+                pcmAudioURL.path,
+                heAACAudioURL.path
+            ]
+        )
+
+        let outputURL = rootURL.appendingPathComponent("audio-first-he-aacv2.mp4")
+        try await muxAudioFirst(videoURL: videoURL, audioURL: heAACAudioURL, outputURL: outputURL)
+        return outputURL
+    }
+
     private func makeColorSequenceVideo(
         in rootURL: URL,
         frameCount: Int,
-        frameRate: Int
+        frameRate: Int,
+        width: Int = 32,
+        height: Int = 32
     ) async throws -> URL {
         let outputURL = rootURL.appendingPathComponent("color-sequence.mov")
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
-        let videoSize = 32
         let videoSettings: [String: Any] = [
             AVVideoCodecKey: AVVideoCodecType.h264,
-            AVVideoWidthKey: videoSize,
-            AVVideoHeightKey: videoSize
+            AVVideoWidthKey: width,
+            AVVideoHeightKey: height
         ]
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
         input.expectsMediaDataInRealTime = false
@@ -301,8 +399,8 @@ final class ClipExportingTests: XCTestCase {
             assetWriterInput: input,
             sourcePixelBufferAttributes: [
                 kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA),
-                kCVPixelBufferWidthKey as String: videoSize,
-                kCVPixelBufferHeightKey as String: videoSize,
+                kCVPixelBufferWidthKey as String: width,
+                kCVPixelBufferHeightKey as String: height,
                 kCVPixelBufferCGImageCompatibilityKey as String: true,
                 kCVPixelBufferCGBitmapContextCompatibilityKey as String: true
             ]
@@ -319,8 +417,8 @@ final class ClipExportingTests: XCTestCase {
             }
 
             let pixelBuffer = try makeSolidPixelBuffer(
-                width: videoSize,
-                height: videoSize,
+                width: width,
+                height: height,
                 color: colorForFrame(frameIndex)
             )
             let presentationTime = CMTime(value: Int64(frameIndex), timescale: CMTimeScale(frameRate))
@@ -403,17 +501,25 @@ final class ClipExportingTests: XCTestCase {
         return pixelBuffer
     }
 
-    private func writeToneAudio(to outputURL: URL, durationSeconds: Double) throws {
-        let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1)!
+    private func writeToneAudio(
+        to outputURL: URL,
+        durationSeconds: Double,
+        channelCount: AVAudioChannelCount = 1
+    ) throws {
+        let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: channelCount)!
         let frameCount = AVAudioFrameCount(durationSeconds * format.sampleRate)
         let file = try AVAudioFile(forWriting: outputURL, settings: format.settings)
         let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount)!
         buffer.frameLength = frameCount
 
-        if let channelData = buffer.floatChannelData?[0] {
-            for sampleIndex in 0..<Int(frameCount) {
-                let phase = (2 * Double.pi * 440 * Double(sampleIndex)) / format.sampleRate
-                channelData[sampleIndex] = Float(sin(phase)) * 0.25
+        if let allChannelData = buffer.floatChannelData {
+            for channelIndex in 0..<Int(channelCount) {
+                let channelData = allChannelData[channelIndex]
+                let frequency = 440 + (110 * Double(channelIndex))
+                for sampleIndex in 0..<Int(frameCount) {
+                    let phase = (2 * Double.pi * frequency * Double(sampleIndex)) / format.sampleRate
+                    channelData[sampleIndex] = Float(sin(phase)) * 0.25
+                }
             }
         }
 
@@ -471,6 +577,80 @@ final class ClipExportingTests: XCTestCase {
             throw error
         }
         XCTAssertEqual(exporter.status, .completed)
+    }
+
+    private func muxAudioFirst(videoURL: URL, audioURL: URL, outputURL: URL) async throws {
+        let videoAsset = AVAsset(url: videoURL)
+        let audioAsset = AVAsset(url: audioURL)
+        let videoDuration = try await videoAsset.load(.duration)
+        let audioDuration = try await audioAsset.load(.duration)
+        let exportDuration = CMTimeMinimum(videoDuration, audioDuration)
+
+        let composition = AVMutableComposition()
+        guard let compositionAudioTrack = composition.addMutableTrack(
+            withMediaType: .audio,
+            preferredTrackID: kCMPersistentTrackID_Invalid
+        ) else {
+            XCTFail("Failed to create composition audio track.")
+            return
+        }
+        guard let compositionVideoTrack = composition.addMutableTrack(
+            withMediaType: .video,
+            preferredTrackID: kCMPersistentTrackID_Invalid
+        ) else {
+            XCTFail("Failed to create composition video track.")
+            return
+        }
+
+        let videoTracks = try await videoAsset.loadTracks(withMediaType: .video)
+        let audioTracks = try await audioAsset.loadTracks(withMediaType: .audio)
+        let videoTrack = try XCTUnwrap(videoTracks.first)
+        let audioTrack = try XCTUnwrap(audioTracks.first)
+        let timeRange = CMTimeRange(start: .zero, duration: exportDuration)
+
+        try compositionAudioTrack.insertTimeRange(timeRange, of: audioTrack, at: .zero)
+        try compositionVideoTrack.insertTimeRange(timeRange, of: videoTrack, at: .zero)
+
+        if FileManager.default.fileExists(atPath: outputURL.path) {
+            try FileManager.default.removeItem(at: outputURL)
+        }
+
+        guard let exporter = AVAssetExportSession(
+            asset: composition,
+            presetName: AVAssetExportPresetPassthrough
+        ) else {
+            throw XCTSkip("Passthrough export is unavailable.")
+        }
+        guard exporter.supportedFileTypes.contains(.mp4) else {
+            throw XCTSkip("Passthrough MP4 export is unavailable.")
+        }
+        exporter.outputURL = outputURL
+        exporter.outputFileType = .mp4
+        exporter.shouldOptimizeForNetworkUse = false
+
+        await withCheckedContinuation { continuation in
+            exporter.exportAsynchronously {
+                continuation.resume()
+            }
+        }
+
+        if let error = exporter.error {
+            throw error
+        }
+        XCTAssertEqual(exporter.status, .completed)
+    }
+
+    private func runProcess(executableURL: URL, arguments: [String]) throws {
+        let process = Process()
+        process.executableURL = executableURL
+        process.arguments = arguments
+
+        try process.run()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            throw XCTSkip("\(executableURL.lastPathComponent) failed with exit code \(process.terminationStatus).")
+        }
     }
 
     private func writeQuadrantImage(to outputURL: URL) throws {

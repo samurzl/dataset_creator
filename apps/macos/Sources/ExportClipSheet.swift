@@ -103,6 +103,7 @@ struct ExportClipSheet: View {
     @StateObject private var previewController = ExportPreviewController()
     @State private var captionText = ""
     @State private var selectedLoopCount: ExportLoopCount = .once
+    @State private var includesAudio = true
     @State private var isExporting = false
     @State private var exportErrorMessage: String?
     @State private var exportTask: Task<Void, Never>?
@@ -120,6 +121,7 @@ struct ExportClipSheet: View {
         _selectedLoopCount = State(
             initialValue: ExportLoopCount(rawValue: request.loopCount) ?? .once
         )
+        _includesAudio = State(initialValue: request.includesAudio)
     }
 
     private var isPreviewEnabled: Bool {
@@ -127,7 +129,9 @@ struct ExportClipSheet: View {
     }
 
     private var exportRequest: ClipExportRequest {
-        request.withVideoLoopCount(selectedLoopCount.rawValue)
+        request
+            .withVideoLoopCount(selectedLoopCount.rawValue)
+            .withAudioEnabled(includesAudio)
     }
 
     var body: some View {
@@ -165,7 +169,7 @@ struct ExportClipSheet: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .task(id: selectedLoopCount) {
+        .task(id: previewReloadID) {
             guard isPreviewEnabled else { return }
             await previewController.load(request: exportRequest)
         }
@@ -198,26 +202,56 @@ struct ExportClipSheet: View {
                 .background(Color.secondary.opacity(0.1))
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             } else if isPreviewEnabled {
-                PlayerPreview(player: previewController.player)
-                    .aspectRatio(max(request.aspectRatio, 0.1), contentMode: .fit)
+                ZStack(alignment: .topTrailing) {
+                    PlayerPreview(player: previewController.player)
+                        .aspectRatio(max(request.aspectRatio, 0.1), contentMode: .fit)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 220)
+
+                    audioToggleButton
+                        .padding(8)
+                }
+                .background(Color.secondary.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            } else {
+                ZStack(alignment: .topTrailing) {
+                    VStack(spacing: 8) {
+                        Text("Preview disabled in virtual machine")
+                            .font(.system(size: 14, weight: .semibold))
+                        Text("Dataset export remains fully available.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
                     .frame(maxWidth: .infinity)
                     .frame(height: 220)
-                    .background(Color.secondary.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            } else {
-                VStack(spacing: 8) {
-                    Text("Preview disabled in virtual machine")
-                        .font(.system(size: 14, weight: .semibold))
-                    Text("Dataset export remains fully available.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
+
+                    audioToggleButton
+                        .padding(8)
                 }
-                .frame(maxWidth: .infinity)
-                .frame(height: 220)
                 .background(Color.secondary.opacity(0.1))
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
         }
+    }
+
+    private var previewReloadID: String {
+        "\(selectedLoopCount.rawValue)-\(includesAudio)"
+    }
+
+    private var audioToggleButton: some View {
+        Button {
+            includesAudio.toggle()
+        } label: {
+            Image(systemName: includesAudio ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                .font(.system(size: 14, weight: .semibold))
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .disabled(isExporting)
+        .help(includesAudio ? "Export with audio" : "Export without audio")
+        .accessibilityLabel(includesAudio ? "Export with audio" : "Export without audio")
     }
 
     private var loopSection: some View {

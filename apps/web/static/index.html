@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Dataset Creator Web</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand-row">
+          <div>
+            <h1>Dataset Creator</h1>
+            <p id="connectionStatus">Ready</p>
+          </div>
+          <button id="refreshButton" class="icon-button" title="Refresh media" aria-label="Refresh media">↻</button>
+        </div>
+
+        <section class="settings-block">
+          <label>
+            <span>Input Folder</span>
+            <input id="inputFolder" type="text" autocomplete="off" spellcheck="false">
+          </label>
+          <label>
+            <span>Dataset Folder</span>
+            <input id="datasetFolder" type="text" autocomplete="off" spellcheck="false">
+          </label>
+          <button id="saveConfigButton" class="primary-button">Save Folders</button>
+        </section>
+
+        <section class="settings-block compact-settings">
+          <div class="section-heading">Caption Worker</div>
+          <label>
+            <span>VLM Provider</span>
+            <select id="vlmProvider">
+              <option value="http">HTTP</option>
+              <option value="command">Command</option>
+              <option value="mock">Mock</option>
+            </select>
+          </label>
+          <label>
+            <span>HTTP URL</span>
+            <input id="vlmHttpUrl" type="text" autocomplete="off" spellcheck="false">
+          </label>
+          <label>
+            <span>Model</span>
+            <input id="vlmModel" type="text" autocomplete="off" spellcheck="false">
+          </label>
+          <label>
+            <span>API Key</span>
+            <input id="vlmApiKey" type="password" autocomplete="off">
+          </label>
+          <label>
+            <span>Tagger</span>
+            <select id="taggerBackend">
+              <option value="wd14">wd14</option>
+              <option value="command">Command</option>
+              <option value="disabled">Disabled</option>
+            </select>
+          </label>
+          <button id="saveCaptionConfigButton">Save Caption Settings</button>
+        </section>
+
+        <div class="media-header">
+          <span>Media</span>
+          <span id="mediaCount">0</span>
+        </div>
+        <div id="mediaList" class="media-list"></div>
+      </aside>
+
+      <main class="workbench">
+        <section class="preview-pane">
+          <div class="top-bar">
+            <div>
+              <h2 id="selectedTitle">No Media Selected</h2>
+              <p id="selectedMeta"></p>
+            </div>
+            <div class="nav-actions">
+              <button id="previousButton">Previous</button>
+              <button id="nextButton">Next</button>
+            </div>
+          </div>
+
+          <div id="mediaFrame" class="media-frame">
+            <div id="emptyPreview" class="empty-preview">Select a media file</div>
+            <video id="videoPreview" playsinline controls hidden></video>
+            <img id="imagePreview" alt="" hidden>
+            <div id="cropOverlay" class="crop-overlay" hidden></div>
+          </div>
+
+          <div class="control-strip" id="videoControls" hidden>
+            <label class="range-control">
+              <span>Start</span>
+              <input id="startFrame" type="range" min="0" max="0" value="0">
+              <output id="startFrameValue">0</output>
+            </label>
+            <label>
+              <span>Frames</span>
+              <select id="frameCount"></select>
+            </label>
+            <button id="playSelectionButton">Play Selection</button>
+          </div>
+
+          <div class="control-strip">
+            <button id="resetCropButton">Reset Crop</button>
+            <span id="cropLabel">Crop: full frame</span>
+          </div>
+        </section>
+
+        <aside class="export-pane">
+          <section class="panel">
+            <div class="section-heading">Export Preview</div>
+            <div class="field-row">
+              <span>Caption</span>
+              <div class="segmented" role="group" aria-label="Caption mode">
+                <button id="automaticCaptionButton" data-caption-mode="automatic">Automatic</button>
+                <button id="manualCaptionButton" data-caption-mode="manual">Manual</button>
+              </div>
+            </div>
+            <textarea id="captionText" rows="7" placeholder="Manual caption"></textarea>
+
+            <div class="field-row" id="loopRow">
+              <span>Loop</span>
+              <div class="segmented" role="group" aria-label="Loop count">
+                <button data-loop-count="1">1x</button>
+                <button data-loop-count="2">2x</button>
+                <button data-loop-count="3">3x</button>
+              </div>
+            </div>
+
+            <label class="toggle-row" id="audioRow">
+              <input id="includesAudio" type="checkbox" checked>
+              <span>Export audio when present</span>
+            </label>
+
+            <button id="exportButton" class="primary-button">Add to Dataset</button>
+            <p id="exportMessage" class="message-line"></p>
+          </section>
+
+          <section class="panel">
+            <div class="section-heading">Caption Queue</div>
+            <div id="captionJobs" class="job-list"></div>
+          </section>
+
+          <section class="panel dataset-panel">
+            <div class="section-heading">Dataset Rows</div>
+            <div id="datasetRows" class="dataset-list"></div>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
+
